@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --fr-bg: #0b1020;
+  --fr-bg-2: #0e1730;
+  --fr-panel: #0f1a2f;
+  --fr-panel-strong: #121c33;
+  --fr-border: #1f2b47;
+  --fr-text: #f2f5fb;
+  --fr-muted: #a7b3c7;
+  --fr-blue: #9bbcff;
+  --fr-blue-strong: #86a8ff;
+  --fr-red: #f3a7b7;
+  --fr-red-strong: #f08ca3;
+  --fr-white: #f7f8fc;
+}
+
+.fr-bg {
+  min-height: 100vh;
+  color: var(--fr-text);
+  background:
+    radial-gradient(
+      1200px 600px at 20% -10%,
+      rgba(155, 188, 255, 0.18),
+      transparent 60%
+    ),
+    radial-gradient(
+      1000px 600px at 120% 0%,
+      rgba(243, 167, 183, 0.18),
+      transparent 60%
+    ),
+    linear-gradient(180deg, var(--fr-bg) 0%, var(--fr-bg-2) 100%);
+}
+
+.fr-panel {
+  border: 1px solid var(--fr-border);
+  background: rgba(15, 26, 47, 0.75);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  border-radius: 1rem;
+}
+
+.fr-panel-muted {
+  border: 1px solid var(--fr-border);
+  background: rgba(11, 16, 32, 0.6);
+  border-radius: 0.75rem;
+}
+
+.fr-input {
+  border: 1px solid var(--fr-border);
+  background: rgba(11, 16, 32, 0.6);
+  color: var(--fr-text);
+}
+
+.fr-input:focus {
+  outline: none;
+  border-color: rgba(155, 188, 255, 0.6);
+  box-shadow: 0 0 0 2px rgba(155, 188, 255, 0.35);
+}
+
+.fr-muted {
+  color: var(--fr-muted);
+}
+
+.fr-pill-blue {
+  background: rgba(155, 188, 255, 0.18);
+  color: var(--fr-blue);
+}
+
+.fr-pill-red {
+  background: rgba(243, 167, 183, 0.18);
+  color: var(--fr-red);
+}
+
+.fr-btn-primary {
+  background: var(--fr-blue-strong);
+  color: #0b1020;
+}
+
+.fr-btn-primary:hover {
+  background: var(--fr-blue);
+}
+
+.fr-btn-danger {
+  background: var(--fr-red-strong);
+  color: #0b1020;
+}
+
+.fr-btn-danger:hover {
+  background: var(--fr-red);
+}
+
+.fr-btn-muted {
+  background: rgba(31, 43, 71, 0.7);
+  color: var(--fr-muted);
+  cursor: not-allowed;
+}
+
+.fr-badge {
+  border: 1px solid var(--fr-border);
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
