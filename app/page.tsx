@@ -353,12 +353,13 @@ export default function Page() {
     });
   };
 
+  // TODO : Wrong call, need to pass through Orchestrator
   const closeElectionAfterVoteExpiration = () => {
     writeContract({
-      address: proposalAddress!, //!\\ Force le type à address
-      abi: PROPOSAL_ABI,
-      functionName: 'vote',
-      args: [ORCHESTRATOR_ADDRESS, 0],
+      address: ORCHESTRATOR_ADDRESS, //!\\ Force le type à address
+      abi: ORCHESTRATOR_ABI,
+      functionName: 'voteProposal',
+      args: [1],
     });
   };
 
