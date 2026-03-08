@@ -6,40 +6,58 @@ import { type Abi } from 'viem';
 import orchestrator from '@/abi/Orchestrator.json';
 import passport from '@/abi/SixRPassport.json';
 import proposal from '@/abi/SixRProposal.json';
+import { ORCHESTRATOR_ADDRESS } from '@/app/lib/contracts';
 
-const ORCHESTRATOR_ADDRESS =
-  '0x05c0e7ef8211e6058a74338adef270cee67f2a4a' as const;
+// ─── ABIs ─────────────────────────────────────────────────────────────────────
 
 const ORCHESTRATOR_ABI = orchestrator.abi as Abi;
 const PASSPORT_ABI = passport.abi as Abi;
 const PROPOSAL_ABI = proposal.abi as Abi;
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const CATEGORY_OPTIONS = ['ECOLOGY', 'EDUCATION', 'ECONOMY', 'DEFENSE'] as const;
-const STATUS_OPTIONS = ['ENDED', 'ONGOING', 'COUNTING', 'CREATED'] as const;
+const STATUS_OPTIONS = ['ENDED', 'ONGOING', 'CREATED'] as const;
+
+type ProposalTuple = readonly [
+  string,   // title
+  string,   // description
+  bigint,   // category (enum index)
+  `0x${string}`, // creator
+  bigint,   // creation timestamp
+  bigint,   // status (enum index)
+  `0x${string}`, // closed block hash
+];
+
+// ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
+
+  // ─── Wallet ───────────────────────────────────────────────────────────────
+
   const { address, isConnected } = useConnection();
+
+  // ─── On-chain reads — Orchestrator ────────────────────────────────────────
 
   const { data: orchestratorOwner, error: orchestratorOwnerError } = useReadContract({
     address: ORCHESTRATOR_ADDRESS,
     abi: ORCHESTRATOR_ABI,
     functionName: 'owner',
   });
+
   const { data: passportAddress } = useReadContract({
     address: ORCHESTRATOR_ADDRESS,
     abi: ORCHESTRATOR_ABI,
     functionName: 'passport',
   });
+
   const { data: proposalAddress } = useReadContract({
     address: ORCHESTRATOR_ADDRESS,
     abi: ORCHESTRATOR_ABI,
     functionName: 'proposal',
   });
 
-  const isAdmin =
-    typeof orchestratorOwner === 'string' &&
-    typeof address === 'string' &&
-    orchestratorOwner.toLowerCase() === address.toLowerCase();
+  // ─── On-chain reads — Passport ────────────────────────────────────────────
 
   const { data: passportOwner } = useReadContract({
     address: passportAddress as `0x${string}` | undefined,
@@ -47,24 +65,28 @@ export default function AdminPage() {
     functionName: 'owner',
     query: { enabled: !!passportAddress },
   });
+
   const { data: passportPaused } = useReadContract({
     address: passportAddress as `0x${string}` | undefined,
     abi: PASSPORT_ABI,
     functionName: 'paused',
     query: { enabled: !!passportAddress },
   });
+
   const { data: passportName } = useReadContract({
     address: passportAddress as `0x${string}` | undefined,
     abi: PASSPORT_ABI,
     functionName: 'name',
     query: { enabled: !!passportAddress },
   });
+
   const { data: passportSymbol } = useReadContract({
     address: passportAddress as `0x${string}` | undefined,
     abi: PASSPORT_ABI,
     functionName: 'symbol',
     query: { enabled: !!passportAddress },
   });
+
   const { data: hasPassport } = useReadContract({
     address: passportAddress as `0x${string}` | undefined,
     abi: PASSPORT_ABI,
@@ -72,6 +94,7 @@ export default function AdminPage() {
     args: address ? [address] : undefined,
     query: { enabled: !!passportAddress && !!address },
   });
+
   const { data: delegatedMode } = useReadContract({
     address: passportAddress as `0x${string}` | undefined,
     abi: PASSPORT_ABI,
@@ -79,6 +102,7 @@ export default function AdminPage() {
     args: address ? [address] : undefined,
     query: { enabled: !!passportAddress && !!address },
   });
+
   const { data: delegatePowers } = useReadContract({
     address: passportAddress as `0x${string}` | undefined,
     abi: PASSPORT_ABI,
@@ -87,12 +111,15 @@ export default function AdminPage() {
     query: { enabled: !!passportAddress && !!address },
   });
 
+  // ─── On-chain reads — Proposal ────────────────────────────────────────────
+
   const { data: proposalOwner } = useReadContract({
     address: proposalAddress as `0x${string}` | undefined,
     abi: PROPOSAL_ABI,
     functionName: 'owner',
     query: { enabled: !!proposalAddress },
   });
+
   const { data: proposalCounter } = useReadContract({
     address: proposalAddress as `0x${string}` | undefined,
     abi: PROPOSAL_ABI,
@@ -113,25 +140,26 @@ export default function AdminPage() {
     query: { enabled: !!proposalAddress && latestProposalId !== undefined },
   });
 
-  type ProposalTuple = readonly [
-    string,
-    string,
-    bigint,
-    `0x${string}`,
-    bigint,
-    bigint,
-    `0x${string}`,
-  ];
+  // ─── Derived state ────────────────────────────────────────────────────────
+
+  const isAdmin =
+    typeof orchestratorOwner === 'string' &&
+    typeof address === 'string' &&
+    orchestratorOwner.toLowerCase() === address.toLowerCase();
 
   const proposalData = latestProposal as ProposalTuple | undefined;
+
   const latestCategory =
     proposalData && Number(proposalData[2]) < CATEGORY_OPTIONS.length
       ? CATEGORY_OPTIONS[Number(proposalData[2])]
       : proposalData?.[2]?.toString();
+
   const latestStatus =
     proposalData && Number(proposalData[5]) < STATUS_OPTIONS.length
       ? STATUS_OPTIONS[Number(proposalData[5])]
       : proposalData?.[5]?.toString();
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <main className="fr-bg">
@@ -143,12 +171,14 @@ export default function AdminPage() {
           </p>
         </div>
 
+        {/* Not connected */}
         {!isConnected && (
           <section className="fr-panel p-6">
             <p className="fr-muted">Connect your wallet to access this page.</p>
           </section>
         )}
 
+        {/* Access denied */}
         {isConnected && !isAdmin && (
           <section className="fr-panel p-6">
             <h2 className="text-lg font-medium text-[var(--fr-red)]">Access denied</h2>
@@ -163,8 +193,10 @@ export default function AdminPage() {
           </section>
         )}
 
+        {/* Dashboard */}
         {isConnected && isAdmin && (
           <>
+            {/* Orchestrator */}
             <section className="fr-panel p-6">
               <h2 className="text-lg font-medium">Orchestrator</h2>
               <div className="mt-4 space-y-2 text-sm fr-muted">
@@ -175,6 +207,7 @@ export default function AdminPage() {
               </div>
             </section>
 
+            {/* Passport */}
             <section className="fr-panel p-6">
               <h2 className="text-lg font-medium">Passport</h2>
               <div className="mt-4 space-y-2 text-sm fr-muted">
@@ -191,6 +224,7 @@ export default function AdminPage() {
               </div>
             </section>
 
+            {/* Proposal */}
             <section className="fr-panel p-6">
               <h2 className="text-lg font-medium">Proposal</h2>
               <div className="mt-4 space-y-2 text-sm fr-muted">

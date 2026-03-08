@@ -1,38 +1,73 @@
 'use client';
 
 import { useState } from 'react';
-import { useConnection, useReadContract, useWriteContract } from 'wagmi';
-import { type Abi, type Address, isAddress } from 'viem';
+import {
+  useConnection,
+  useReadContract,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+  usePublicClient,
+} from 'wagmi';
+import {
+  type Abi,
+  type Address,
+  isAddress,
+  ContractFunctionRevertedError,
+  type SimulateContractParameters,
+} from 'viem';
 
 import o from "@/abi/Orchestrator.json";
 import passport from "@/abi/SixRPassport.json";
+import { ORCHESTRATOR_ADDRESS } from '@/app/lib/contracts';
+import { useAutoDismiss } from '@/app/lib/hooks';
 
-function formatWalletError(message: string) {
-  const lower = message.toLowerCase();
-  if (
-    lower.includes('user rejected') ||
-    lower.includes('user denied') ||
-    lower.includes('rejected the request')
-  ) {
-    return 'Transaction cancelled in wallet.';
-  }
-  if (lower.includes('insufficient funds')) {
-    return 'Insufficient funds to pay gas fees.';
-  }
-  if (lower.includes('execution reverted')) {
-    return 'Transaction reverted by the smart contract.';
-  }
-  return 'Transaction failed. Please try again.';
-}
+// ─── ABIs ─────────────────────────────────────────────────────────────────────
+
+const ORCHESTRATOR_ABI = o.abi as Abi;
+const PASSPORT_ABI = passport.abi as Abi;
+
+// ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Page() {
+
+  // ─── Wallet ───────────────────────────────────────────────────────────────
+
   const { address, isConnected } = useConnection();
-  const {
-    mutate: writeContract,
-    isPending,
-    isSuccess,
-    error,
-  } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { mutate: writeContract, data: txHash, isPending } = useWriteContract();
+
+  // ─── On-chain reads ───────────────────────────────────────────────────────
+
+  const { data: rawPassportAddress } = useReadContract({
+    address: ORCHESTRATOR_ADDRESS,
+    abi: ORCHESTRATOR_ABI,
+    functionName: 'passport',
+  });
+
+  const { data: orchestratorOwner } = useReadContract({
+    address: ORCHESTRATOR_ADDRESS,
+    abi: ORCHESTRATOR_ABI,
+    functionName: 'owner',
+  });
+
+  const { data: isPaused } = useReadContract({
+    address: rawPassportAddress as `0x${string}` | undefined,
+    abi: PASSPORT_ABI,
+    functionName: 'paused',
+    query: { enabled: !!rawPassportAddress },
+  });
+
+  const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+
+  // ─── Derived state ────────────────────────────────────────────────────────
+
+  const isPassportPaused = isPaused === true;
+  const isOwner =
+    typeof orchestratorOwner === 'string' &&
+    typeof address === 'string' &&
+    orchestratorOwner.toLowerCase() === address.toLowerCase();
+
+  // ─── UI state ─────────────────────────────────────────────────────────────
 
   const [form, setForm] = useState({
     recipient: '' as Address | '',
@@ -44,36 +79,35 @@ export default function Page() {
     height: '',
   });
   const [formError, setFormError] = useState<string | null>(null);
+  const [mintError, setMintError] = useState<string | null>(null);
 
-  const ORCHESTRATOR_ADDRESS =
-    '0x05c0e7ef8211e6058a74338adef270cee67f2a4a' as const; // as const to fix the type on the value, no string by default
+  useAutoDismiss(formError, setFormError);
+  useAutoDismiss(mintError, setMintError);
 
-  const ORCHESTRATOR_ABI = o.abi as Abi;
-  const PASSSPORT_ABI = passport.abi as Abi;
+  // ─── Transaction simulation ───────────────────────────────────────────────
+  // Simulates the call against the RPC before submitting, so contract revert
+  // reasons are surfaced directly instead of a generic gas estimation error.
 
-  const { data: passportAddress } = useReadContract({
-    address: ORCHESTRATOR_ADDRESS,
-    abi: ORCHESTRATOR_ABI,
-    functionName: 'passport',
-  });
-  const { data: orchestratorOwner } = useReadContract({
-    address: ORCHESTRATOR_ADDRESS,
-    abi: ORCHESTRATOR_ABI,
-    functionName: 'owner',
-  });
+  const simulateAndWrite = async (
+    params: SimulateContractParameters,
+    setError: (msg: string) => void,
+  ) => {
+    if (!publicClient || !address) return;
+    try {
+      const { request } = await publicClient.simulateContract({ ...params, account: address });
+      writeContract(request);
+    } catch (err) {
+      if (err instanceof ContractFunctionRevertedError) {
+        setError(err.reason ?? err.shortMessage ?? 'Transaction would fail.');
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('An unknown error occurred.');
+      }
+    }
+  };
 
-  const { data: isPaused } = useReadContract({
-    address: passportAddress as `0x${string}` | undefined,
-    abi: PASSSPORT_ABI,
-    functionName: 'paused',
-    query: { enabled: !!passportAddress },
-  });
-
-  const isPassportPaused = isPaused === true;
-  const isOwner =
-    typeof orchestratorOwner === 'string' &&
-    typeof address === 'string' &&
-    orchestratorOwner.toLowerCase() === address.toLowerCase();
+  // ─── Handlers ─────────────────────────────────────────────────────────────
 
   const handleChange =
     (field: keyof typeof form) =>
@@ -81,8 +115,9 @@ export default function Page() {
       setForm((prev) => ({ ...prev, [field]: event.target.value }));
     };
 
-  const handleMintMock = (event: React.FormEvent) => {
+  const handleMint = (event: React.FormEvent) => {
     event.preventDefault();
+    // Guards: client-side checks before simulation
     if (!address) {
       setFormError('Connect your wallet first.');
       return;
@@ -96,24 +131,31 @@ export default function Page() {
       return;
     }
     setFormError(null);
-    writeContract({
-      address: ORCHESTRATOR_ADDRESS,
-      abi: ORCHESTRATOR_ABI,
-      functionName: 'mintPassport',
-      args: [
-        form.recipient,
-        form.firstName,
-        form.lastName,
-        form.nationality,
-        form.birthDate,
-        form.birthPlace,
-        form.height,
-      ],
-    });
+    setMintError(null);
+    simulateAndWrite(
+      {
+        address: ORCHESTRATOR_ADDRESS,
+        abi: ORCHESTRATOR_ABI,
+        functionName: 'mintPassport',
+        args: [
+          form.recipient,
+          form.firstName,
+          form.lastName,
+          form.nationality,
+          form.birthDate,
+          form.birthPlace,
+          form.height,
+        ],
+      },
+      setMintError,
+    );
   };
 
+  // ─── Derived UI flags ─────────────────────────────────────────────────────
+
   const isMintDisabled = !isConnected || !isOwner || isPending || isPassportPaused;
-  const prettyError = error ? formatWalletError(error.message) : null;
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <main className="fr-bg">
@@ -128,18 +170,12 @@ export default function Page() {
         <section className="fr-panel p-6">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-medium">Form</h2>
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                isConnected
-                  ? 'fr-pill-blue'
-                  : 'fr-pill-red'
-              }`}
-            >
+            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${isConnected ? 'fr-pill-blue' : 'fr-pill-red'}`}>
               {isConnected ? 'Connected' : 'Disconnected'}
             </span>
           </div>
 
-          <form onSubmit={handleMintMock} className="mt-4 grid gap-4">
+          <form onSubmit={handleMint} className="mt-4 grid gap-4">
             <div className="grid gap-4 md:grid-cols-2">
               <label className="grid gap-2 text-sm fr-muted">
                 Recipient address
@@ -223,30 +259,18 @@ export default function Page() {
             <button
               type="submit"
               disabled={isMintDisabled}
-              className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                isMintDisabled
-                  ? 'fr-btn-muted'
-                  : 'fr-btn-primary'
-              }`}
+              className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${isMintDisabled ? 'fr-btn-muted' : 'fr-btn-primary'}`}
             >
               {isPending ? 'Transaction...' : 'Mint passport'}
             </button>
           </form>
 
-          <div className="mt-4 text-sm fr-muted">
+          <div className="mt-4 space-y-2 text-sm fr-muted">
             {!isConnected && <p>Connect your wallet to enable the button.</p>}
-            {isConnected && !isOwner && (
-              <p>Connected wallet is not the owner of the contract.</p>
-            )}
-            {formError && <p className="text-[var(--fr-red)]">Error: {formError}</p>}
-            {isSuccess && <p className="text-[var(--fr-blue)]">Transaction sent ✅</p>}
-            {prettyError && <p className="text-[var(--fr-red)]">{prettyError}</p>}
-            {error && (
-              <details className="mt-2 fr-panel-muted p-3 text-xs">
-                <summary className="cursor-pointer fr-muted">Technical details</summary>
-                <p className="mt-2 break-all text-[var(--fr-red)]">{error.message}</p>
-              </details>
-            )}
+            {isConnected && !isOwner && <p>Connected wallet is not the owner of the contract.</p>}
+            {formError && <p className="text-[var(--fr-red)]">{formError}</p>}
+            {mintError && <p className="text-[var(--fr-red)]">{mintError}</p>}
+            {isTxConfirmed && <p className="text-[var(--fr-blue)]">Passport minted successfully.</p>}
           </div>
         </section>
       </div>

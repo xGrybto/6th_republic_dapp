@@ -5,21 +5,32 @@ import {
   useBlock,
   useConnection,
   useReadContract,
+  useReadContracts,
   useWriteContract,
   useWaitForTransactionReceipt,
+  usePublicClient,
 } from 'wagmi';
-import { type Abi, zeroAddress } from 'viem';
+import {
+  type Abi,
+  zeroAddress,
+  ContractFunctionRevertedError,
+  type SimulateContractParameters,
+} from 'viem';
 
-import proposal from '@/abi/SixRProposal.json';
+import proposalAbi from '@/abi/SixRProposal.json';
 import passport from '@/abi/SixRPassport.json';
 import o from "@/abi/Orchestrator.json";
 import { toAddress } from '@/app/lib/address';
+import { ORCHESTRATOR_ADDRESS } from '@/app/lib/contracts';
+import { useAutoDismiss } from '@/app/lib/hooks';
 
-const PROPOSAL_ABI = proposal.abi as Abi;
+// ─── ABIs ─────────────────────────────────────────────────────────────────────
+
+const PROPOSAL_ABI = proposalAbi.abi as Abi;
 const PASSPORT_ABI = passport.abi as Abi;
-const ORCHESTRATOR_ABI = o.abi as Abi
+const ORCHESTRATOR_ABI = o.abi as Abi;
 
-const ORCHESTRATOR_ADDRESS = '0x05c0e7ef8211e6058a74338adef270cee67f2a4a' as const; // as const to fix the type on the value, no string by default
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const CATEGORY_OPTIONS = [
   { value: 0, label: 'ECOLOGY' },
@@ -31,8 +42,7 @@ const CATEGORY_OPTIONS = [
 const STATUS_OPTIONS = [
   { value: 0, label: 'ENDED' },
   { value: 1, label: 'ONGOING' },
-  { value: 2, label: 'COUNTING' },
-  { value: 3, label: 'CREATED' },
+  { value: 2, label: 'CREATED' },
 ] as const;
 
 const VOTE_OPTIONS = [
@@ -40,29 +50,47 @@ const VOTE_OPTIONS = [
   { value: 2, label: 'YES' },
 ] as const;
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type ProposalTuple = readonly [
+  string,        // title
+  string,        // description
+  bigint,        // category (enum index)
+  `0x${string}`, // creator
+  bigint,        // creation timestamp
+  bigint,        // voting start timestamp
+  bigint,        // status (enum index)
+  `0x${string}`, // closed block hash
+];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatCountdown(secondsLeft: bigint): string {
+  const total = secondsLeft > BigInt(0) ? secondsLeft : BigInt(0);
+  const days    = total / BigInt(86400);
+  const hours   = (total % BigInt(86400)) / BigInt(3600);
+  const minutes = (total % BigInt(3600)) / BigInt(60);
+  const seconds = total % BigInt(60);
+  return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+}
+
+// ─── Page ──────────────────────────────────────────────────────────────────────
+
 export default function Page() {
+
+  // ─── SSR hydration guard ──────────────────────────────────────────────────
+  // Prevents wallet-dependent UI from rendering on the server (hydration mismatch).
+
   const [isClient, setIsClient] = useState(false);
+  useEffect(() => { setIsClient(true); }, []);
+
+  // ─── Wallet ───────────────────────────────────────────────────────────────
+
   const { isConnected, address } = useConnection();
-  const {
-    mutate: writeContract,
-    data: txHash,
-    isPending: isTxPending,
-    error: txError,
-  } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { mutate: writeContract, data: txHash, isPending: isTxPending } = useWriteContract();
 
-  const {
-    mutate: writeVote,
-    data: voteTxHash,
-    isPending: isVoteTxPending,
-    error: voteTxError,
-  } = useWriteContract();
-
-  const [form, setForm] = useState({
-    title: '',
-    description: '',
-    category: '0',
-  });
-  const [formError, setFormError] = useState<string | null>(null);
+  // ─── On-chain reads — Orchestrator ────────────────────────────────────────
 
   const { data: rawPassportAddress } = useReadContract({
     address: ORCHESTRATOR_ADDRESS,
@@ -70,16 +98,16 @@ export default function Page() {
     functionName: 'passport',
   });
 
-  const passportAddress = toAddress(rawPassportAddress);
-
-
   const { data: rawProposalAddress } = useReadContract({
     address: ORCHESTRATOR_ADDRESS,
     abi: ORCHESTRATOR_ABI,
     functionName: 'proposal',
   });
 
+  const passportAddress = toAddress(rawPassportAddress);
   const proposalAddress = toAddress(rawProposalAddress);
+
+  // ─── On-chain reads — Proposal ────────────────────────────────────────────
 
   const {
     data: proposalCounter,
@@ -92,7 +120,7 @@ export default function Page() {
     functionName: 'proposalCounter',
   });
 
-  const lastProposalId =
+  const currentProposalId =
     typeof proposalCounter === 'bigint' && proposalCounter > BigInt(0)
       ? proposalCounter - BigInt(1)
       : undefined;
@@ -106,45 +134,33 @@ export default function Page() {
     address: proposalAddress,
     abi: PROPOSAL_ABI,
     functionName: 'get',
-    args: lastProposalId !== undefined ? [lastProposalId] : undefined,
-    query: { enabled: lastProposalId !== undefined },
+    args: currentProposalId !== undefined ? [currentProposalId] : undefined,
+    query: { enabled: currentProposalId !== undefined },
   });
 
-  type ProposalTuple = readonly [
-    string,
-    string,
-    bigint,
-    `0x${string}`,
-    bigint,
-    bigint,
-    `0x${string}`,
-  ];
+  const { data: rawPreparationPeriod } = useReadContract({
+    address: proposalAddress,
+    abi: PROPOSAL_ABI,
+    functionName: 'PREPARATION_PERIOD',
+    query: { enabled: !!proposalAddress },
+  });
 
-  const proposal = proposalData as ProposalTuple | undefined;
-  const isEmptyProposal =
-    proposal && proposal[4] === BigInt(0) && proposal[3] === zeroAddress;
-  const creationTime =
-    proposal && proposal[4] !== undefined ? BigInt(proposal[4]) : undefined;
-  const statusValue =
-    proposal && proposal[5] !== undefined ? BigInt(proposal[5]) : undefined;
-  const isCreated = statusValue === BigInt(3);
-  const isOngoing = statusValue === BigInt(1);
-  const isCounting = statusValue === BigInt(2);
+  const { data: rawVotingPeriod } = useReadContract({
+    address: proposalAddress,
+    abi: PROPOSAL_ABI,
+    functionName: 'VOTING_PERIOD',
+    query: { enabled: !!proposalAddress },
+  });
 
-  const categoryLabel =
-    proposal &&
-    CATEGORY_OPTIONS.find(
-      (option) => option.value === Number(proposal[2]),
-    )?.label;
-  const statusLabel =
-    proposal &&
-    STATUS_OPTIONS.find((option) => option.value === Number(proposal[5]))
-      ?.label;
+  const { data: hasVoted } = useReadContract({
+    address: proposalAddress,
+    abi: PROPOSAL_ABI,
+    functionName: 'hasVoted',
+    args: address && currentProposalId !== undefined ? [currentProposalId, address] : undefined,
+    query: { enabled: !!address && currentProposalId !== undefined },
+  });
 
-  const isCreatedFinal = isCreated || statusLabel === 'CREATED';
-  const isOngoingFinal = isOngoing || statusLabel === 'ONGOING';
-  const isCountingFinal = isCounting || statusLabel === 'COUNTING';
-  const isEndedFinal = statusLabel === 'ENDED' || statusValue === BigInt(0);
+  // ─── On-chain reads — Passport ────────────────────────────────────────────
 
   const { data: hasPassport } = useReadContract({
     address: passportAddress,
@@ -162,41 +178,90 @@ export default function Page() {
     query: { enabled: !!passportAddress && !!address },
   });
 
-  const hasPassportValue = hasPassport === true;
-  const isVoteDelegated =
-    typeof representative === 'string' && representative !== zeroAddress;
+  // ─── On-chain reads — Vote results (ended proposals only) ─────────────────
 
-  const { data: hasVoted } = useReadContract({
-    address: proposalAddress,
-    abi: PROPOSAL_ABI,
-    functionName: 'hasVoted',
-    args:
-      address && lastProposalId !== undefined
-        ? [lastProposalId, address]
-        : undefined,
-    query: { enabled: !!address && lastProposalId !== undefined },
+  const { data: voteCountData } = useReadContract({
+    address: ORCHESTRATOR_ADDRESS,
+    abi: ORCHESTRATOR_ABI,
+    functionName: 'countVotes',
+    args: currentProposalId !== undefined ? [currentProposalId] : undefined,
+    query: { enabled: currentProposalId !== undefined },
   });
 
-  const hasVotedValue = hasVoted === true;
+  // ─── On-chain reads — Past proposals (batch) ──────────────────────────────
 
-  const { data: latestBlock } = useBlock({
-    watch: true,
+  const pastProposalIds = useMemo(() => {
+    if (currentProposalId === undefined || currentProposalId <= BigInt(1)) return [];
+    return Array.from({ length: Number(currentProposalId) - 1 }, (_, i) => BigInt(i + 1));
+  }, [currentProposalId]);
+
+  const { data: pastProposalsData } = useReadContracts({
+    contracts: pastProposalIds.map((id) => ({
+      address: proposalAddress!,
+      abi: PROPOSAL_ABI,
+      functionName: 'get' as const,
+      args: [id] as const,
+    })),
+    query: { enabled: pastProposalIds.length > 0 && !!proposalAddress },
   });
+
+  const { data: pastVoteCountsData } = useReadContracts({
+    contracts: pastProposalIds.map((id) => ({
+      address: ORCHESTRATOR_ADDRESS,
+      abi: ORCHESTRATOR_ABI,
+      functionName: 'countVotes' as const,
+      args: [id] as const,
+    })),
+    query: { enabled: pastProposalIds.length > 0 },
+  });
+
+  // ─── Block (for countdowns) ───────────────────────────────────────────────
+
+  const { data: latestBlock } = useBlock({ watch: true });
   const blockTimestamp = latestBlock?.timestamp;
-  const preparationPeriod = BigInt(86400);
-  const votingPeriod = BigInt(259200);
+
+  const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+
+  // ─── Derived state ────────────────────────────────────────────────────────
+
+  const currentProposal  = proposalData as ProposalTuple | undefined;
+  const isEmptyProposal  = currentProposal && currentProposal[4] === BigInt(0) && currentProposal[3] === zeroAddress;
+  const creationTime     = currentProposal ? BigInt(currentProposal[4]) : undefined;
+  const votingTime       = currentProposal ? BigInt(currentProposal[5]) : undefined;
+  const statusValue      = currentProposal ? BigInt(currentProposal[6]) : undefined;
+
+  const categoryLabel = currentProposal
+    ? CATEGORY_OPTIONS.find((opt) => opt.value === Number(currentProposal[2]))?.label
+    : undefined;
+  const statusLabel = currentProposal
+    ? STATUS_OPTIONS.find((opt) => opt.value === Number(currentProposal[6]))?.label
+    : undefined;
+
+  const isCreatedFinal = statusValue === BigInt(2) || statusLabel === 'CREATED';
+  const isOngoingFinal = statusValue === BigInt(1) || statusLabel === 'ONGOING';
+  const isEndedFinal   = statusValue === BigInt(0) || statusLabel === 'ENDED';
+
+  const hasPassportValue = hasPassport === true;
+  const isVoteDelegated  = typeof representative === 'string' && representative !== zeroAddress;
+  const hasVotedValue    = hasVoted === true;
+  const voteCount        = voteCountData as readonly [bigint, bigint] | undefined;
+  const preparationPeriod = typeof rawPreparationPeriod === 'bigint' ? rawPreparationPeriod : undefined;
+  const votingPeriod      = typeof rawVotingPeriod === 'bigint' ? rawVotingPeriod : undefined;
+
   const canStartVoting =
     isConnected &&
     creationTime !== undefined &&
     blockTimestamp !== undefined &&
+    preparationPeriod !== undefined &&
     blockTimestamp >= creationTime + preparationPeriod &&
     isCreatedFinal;
 
   const isVotingExpired =
     isOngoingFinal &&
-    creationTime !== undefined &&
+    votingTime !== undefined &&
     blockTimestamp !== undefined &&
-    blockTimestamp >= creationTime + preparationPeriod + votingPeriod;
+    votingPeriod !== undefined &&
+    blockTimestamp >= votingTime + votingPeriod;
 
   const canVote =
     isConnected &&
@@ -206,19 +271,14 @@ export default function Page() {
     !isVoteDelegated &&
     !hasVotedValue;
 
-  const formatCountdown = (secondsLeft: bigint) => {
-    const total = secondsLeft > BigInt(0) ? secondsLeft : BigInt(0);
-    const days = total / BigInt(86400);
-    const hours = (total % BigInt(86400)) / BigInt(3600);
-    const minutes = (total % BigInt(3600)) / BigInt(60);
-    const seconds = total % BigInt(60);
-    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
-  };
+  // ─── Countdowns ───────────────────────────────────────────────────────────
 
-  const preparationEndsAt =
-    creationTime !== undefined ? creationTime + preparationPeriod : undefined;
-  const votingEndsAt =
-    creationTime !== undefined ? creationTime + preparationPeriod + votingPeriod : undefined;
+  const preparationEndsAt = creationTime !== undefined && preparationPeriod !== undefined
+    ? creationTime + preparationPeriod
+    : undefined;
+  const votingEndsAt = votingTime !== undefined && votingPeriod !== undefined
+    ? votingTime + votingPeriod
+    : undefined;
 
   const preparationCountdown = useMemo(() => {
     if (!preparationEndsAt || !blockTimestamp) return null;
@@ -230,75 +290,43 @@ export default function Page() {
     return formatCountdown(votingEndsAt - blockTimestamp);
   }, [votingEndsAt, blockTimestamp]);
 
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+  // ─── UI state ─────────────────────────────────────────────────────────────
 
+  const [form, setForm] = useState({ title: '', description: '', category: '0' });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [createProposalError, setCreateProposalError] = useState<string | null>(null);
+  const [startVotingError, setStartVotingError] = useState<string | null>(null);
+  const [voteError, setVoteError] = useState<string | null>(null);
 
+  useAutoDismiss(formError, setFormError);
+  useAutoDismiss(createProposalError, setCreateProposalError);
+  useAutoDismiss(startVotingError, setStartVotingError);
+  useAutoDismiss(voteError, setVoteError);
 
-  const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
+  // ─── Transaction simulation ───────────────────────────────────────────────
+  // Simulates the call against the RPC before submitting, so contract revert
+  // reasons are surfaced directly instead of a generic gas estimation error.
 
-  const { isSuccess: isVoteTxConfirmed } = useWaitForTransactionReceipt({
-    hash: voteTxHash,
-  });
-
-  useEffect(() => {
-    if (isTxConfirmed) {
-      refetchCounter();
-      refetchProposal();
-      setForm({ title: '', description: '', category: '0' });
-    }
-  }, [isTxConfirmed, refetchCounter, refetchProposal]);
-
-  useEffect(() => {
-    if (isVoteTxConfirmed) {
-      fetchLatestCountResult();
-    }
-  }, [isTxConfirmed])
-
-  useEffect(() => {
-      fetchLatestCountResult();
-  }, [])
-
-  type CountResult = {
-    type: 'VOTED' | 'REFUSED';
-    yes: bigint;
-    no: bigint;
-    abstention: bigint;
-    blockNumber?: bigint;
-    logIndex?: number;
-  };
-
-  const [countResult, setCountResult] = useState<CountResult | null>(null);
-
-  const fetchLatestCountResult = async () => {
+  const simulateAndWrite = async (
+    params: SimulateContractParameters,
+    setError: (msg: string) => void,
+  ) => {
+    if (!publicClient || !address) return;
     try {
-      const response = await fetch('/api/logs');
-      const payload = await response.json();
-      console.debug('[countVotes] api payload', payload);
-      if (!payload?.ok) {
-        console.debug('[countVotes] api error', payload?.error);
-        return;
+      const { request } = await publicClient.simulateContract({ ...params, account: address });
+      writeContract(request);
+    } catch (err) {
+      if (err instanceof ContractFunctionRevertedError) {
+        setError(err.reason ?? err.shortMessage ?? 'Transaction would fail.');
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('An unknown error occurred.');
       }
-      const result = payload.countResult;
-      if (!result) {
-        console.debug('[countVotes] api returned no countResult');
-        return;
-      }
-      setCountResult({
-        type: result.type,
-        yes: BigInt(result.yes),
-        no: BigInt(result.no),
-        abstention: BigInt(result.abstention),
-        blockNumber: result.blockNumber ? BigInt(result.blockNumber) : undefined,
-        logIndex: result.logIndex ?? undefined,
-      });
-    } catch (error) {
-      console.error('[countVotes] getLogs failed', error);
     }
   };
+
+  // ─── Handlers ─────────────────────────────────────────────────────────────
 
   const handleCreateProposal = (event: React.FormEvent) => {
     event.preventDefault();
@@ -306,6 +334,7 @@ export default function Page() {
     const description = form.description.trim();
     const categoryNumber = Number(form.category);
 
+    // Guards: client-side checks before simulation
     if (!isEndedFinal) {
       setFormError('You cannot create a proposal while another one is active.');
       return;
@@ -320,48 +349,68 @@ export default function Page() {
     }
 
     setFormError(null);
-    writeContract({
-      address: ORCHESTRATOR_ADDRESS,
-      abi: ORCHESTRATOR_ABI,
-      functionName: 'createProposal',
-      args: [title, description, categoryNumber],
-    });
+    setCreateProposalError(null);
+    simulateAndWrite(
+      {
+        address: ORCHESTRATOR_ADDRESS,
+        abi: ORCHESTRATOR_ABI,
+        functionName: 'createProposal',
+        args: [title, description, categoryNumber],
+      },
+      setCreateProposalError,
+    );
   };
 
   const handleStartVoting = () => {
-    writeContract({
-      address: ORCHESTRATOR_ADDRESS,
-      abi: ORCHESTRATOR_ABI,
-      functionName: 'startVoting',
-    });
+    setStartVotingError(null);
+    simulateAndWrite(
+      {
+        address: ORCHESTRATOR_ADDRESS,
+        abi: ORCHESTRATOR_ABI,
+        functionName: 'startVoting',
+        args: [currentProposalId],
+      },
+      setStartVotingError,
+    );
   };
 
   const handleVote = (voteValue: number) => {
-    writeContract({
-      address: ORCHESTRATOR_ADDRESS,
-      abi: ORCHESTRATOR_ABI,
-      functionName: 'voteProposal',
-      args: [voteValue],
-    });
+    setVoteError(null);
+    simulateAndWrite(
+      {
+        address: ORCHESTRATOR_ADDRESS,
+        abi: ORCHESTRATOR_ABI,
+        functionName: 'voteProposal',
+        args: [currentProposalId, voteValue],
+      },
+      setVoteError,
+    );
   };
 
-  const handleCountVotes = () => {
-    writeContract({
-      address: ORCHESTRATOR_ADDRESS,
-      abi: ORCHESTRATOR_ABI,
-      functionName: 'countVotes',
-    });
+  const handleCloseElection = () => {
+    setVoteError(null);
+    simulateAndWrite(
+      {
+        address: ORCHESTRATOR_ADDRESS,
+        abi: ORCHESTRATOR_ABI,
+        functionName: 'voteProposal',
+        args: [currentProposalId, 1],
+      },
+      setVoteError,
+    );
   };
 
-  // TODO : Wrong call, need to pass through Orchestrator
-  const closeElectionAfterVoteExpiration = () => {
-    writeContract({
-      address: ORCHESTRATOR_ADDRESS, //!\\ Force le type à address
-      abi: ORCHESTRATOR_ABI,
-      functionName: 'voteProposal',
-      args: [1],
-    });
-  };
+  // ─── Post-tx refresh ──────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (isTxConfirmed) {
+      refetchCounter();
+      refetchProposal();
+      setForm({ title: '', description: '', category: '0' });
+    }
+  }, [isTxConfirmed, refetchCounter, refetchProposal]);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <main className="fr-bg">
@@ -369,35 +418,25 @@ export default function Page() {
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-semibold tracking-tight">Vote</h1>
           <p className="text-sm fr-muted">
-            Latest proposal fetched from the Proposal contract.
+            Join 6R community, vote in a decentralized way !
           </p>
         </div>
 
+        {/* Create a new proposal */}
         <section className="fr-panel p-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">Create Proposal</h2>
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                isClient && isConnected
-                  ? 'fr-pill-blue'
-                  : 'fr-pill-red'
-              }`}
-            >
+            <h2 className="text-lg font-medium">Create a new proposal</h2>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${isClient && isConnected ? 'fr-pill-blue' : 'fr-pill-red'}`}>
               {isClient && isConnected ? 'Connected' : 'Disconnected'}
             </span>
           </div>
 
-          <form
-            onSubmit={handleCreateProposal}
-            className="mt-4 grid w-full max-w-2xl gap-4"
-          >
+          <form onSubmit={handleCreateProposal} className="mt-4 grid w-full max-w-2xl gap-4">
             <label className="grid w-full gap-2 text-sm fr-muted">
               Title
               <input
                 value={form.title}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, title: event.target.value }))
-                }
+                onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
                 className="fr-input w-full rounded-xl px-3 py-2 text-sm"
                 required
               />
@@ -407,9 +446,7 @@ export default function Page() {
               Description
               <textarea
                 value={form.description}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, description: event.target.value }))
-                }
+                onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
                 rows={4}
                 className="fr-input w-full rounded-xl px-3 py-2 text-sm"
                 required
@@ -420,9 +457,7 @@ export default function Page() {
               Category
               <select
                 value={form.category}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, category: event.target.value }))
-                }
+                onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}
                 className="fr-input w-full rounded-xl px-3 py-2 text-sm"
                 required
               >
@@ -434,24 +469,22 @@ export default function Page() {
               </select>
             </label>
 
+            {!isEndedFinal && (
+              <p className="text-sm text-[var(--fr-blue)]">
+                Vote ongoing, proposal creation disabled.
+              </p>
+            )}
             {formError && (
-              <p className="w-full truncate text-sm text-[var(--fr-red)]">
-                {formError}
-              </p>
+              <p className="text-sm text-[var(--fr-red)]">{formError}</p>
             )}
-            {txError && (
-              <p className="w-full truncate text-sm text-[var(--fr-red)]">
-                Error: {txError.message}
-              </p>
+            {createProposalError && (
+              <p className="text-sm text-[var(--fr-red)]">{createProposalError}</p>
             )}
-
             <button
               type="submit"
               disabled={!isConnected || isTxPending || !isEndedFinal}
               className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                !isConnected || isTxPending || !isEndedFinal
-                  ? 'fr-btn-muted'
-                  : 'fr-btn-primary'
+                !isConnected || isTxPending || !isEndedFinal ? 'fr-btn-muted' : 'fr-btn-primary'
               }`}
             >
               {isTxPending ? 'Transaction...' : 'Create proposal'}
@@ -459,14 +492,15 @@ export default function Page() {
           </form>
         </section>
 
+        {/* Current proposal */}
         <section className="fr-panel p-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">Latest Proposal</h2>
+            <h2 className="text-lg font-medium">Current Proposal</h2>
             <span className="fr-badge rounded-full bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-xs font-medium text-[var(--fr-muted)]">
               {isCounterLoading
                 ? 'Loading...'
-                : lastProposalId !== undefined
-                  ? `#${lastProposalId.toString()}`
+                : currentProposalId !== undefined
+                  ? `#${currentProposalId.toString()}`
                   : 'None'}
             </span>
           </div>
@@ -478,57 +512,62 @@ export default function Page() {
             {proposalError && (
               <p className="text-[var(--fr-red)]">Error: {proposalError.message}</p>
             )}
-            {!isProposalLoading && !proposalError && proposal === undefined && (
+            {!isProposalLoading && !proposalError && currentProposal === undefined && (
               <p>No proposal data available.</p>
             )}
           </div>
 
-          {proposal && !isEmptyProposal && (
+          {currentProposal && !isEmptyProposal && (
             <div className="fr-panel-muted mt-4 grid gap-3 p-4 text-sm">
               <div>
                 <div className="text-xs fr-muted">Title</div>
-                <div className="font-medium text-[var(--fr-white)]">
-                  {proposal[0]}
-                </div>
+                <div className="font-medium text-[var(--fr-white)]">{currentProposal[0]}</div>
               </div>
               <div>
                 <div className="text-xs fr-muted">Description</div>
-                <div className="text-[var(--fr-white)]">{proposal[1]}</div>
+                <div className="text-[var(--fr-white)]">{currentProposal[1]}</div>
               </div>
               <div className="grid gap-2 md:grid-cols-3">
                 <div>
                   <div className="text-xs fr-muted">Category</div>
-                  <div>{categoryLabel ?? proposal[2].toString()}</div>
+                  <div>{categoryLabel ?? currentProposal[2].toString()}</div>
                 </div>
                 <div>
                   <div className="text-xs fr-muted">Creator</div>
-                  <div className="font-mono text-xs">{proposal[3]}</div>
+                  <div className="font-mono text-xs">{currentProposal[3]}</div>
                 </div>
                 <div>
                   <div className="text-xs fr-muted">Status</div>
-                  <div>{statusLabel ?? proposal[5].toString()}</div>
+                  <div>{statusLabel ?? currentProposal[6].toString()}</div>
                 </div>
               </div>
+
+              {/* Preparation countdown + start voting */}
               {isClient && isCreatedFinal && preparationCountdown && (
                 <p className="mt-2 text-sm text-[var(--fr-blue)]">
                   Preparation ends in: {preparationCountdown}
                 </p>
               )}
+              {isClient && canStartVoting && (
+                <>
+                  <button
+                    onClick={handleStartVoting}
+                    disabled={isTxPending}
+                    className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${isTxPending ? 'fr-btn-muted' : 'fr-btn-primary'}`}
+                  >
+                    {isTxPending ? 'Transaction...' : 'Start voting'}
+                  </button>
+                  {startVotingError && (
+                    <p className="text-sm text-[var(--fr-red)]">{startVotingError}</p>
+                  )}
+                </>
+              )}
+
+              {/* Voting countdown + vote buttons */}
               {isClient && isOngoingFinal && votingCountdown && (
                 <p className="mt-2 text-sm text-[var(--fr-blue)]">
                   Voting ends in: {votingCountdown}
                 </p>
-              )}
-              {isClient && canStartVoting && (
-                <button
-                  onClick={handleStartVoting}
-                  disabled={isTxPending}
-                  className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                    isTxPending ? 'fr-btn-muted' : 'fr-btn-primary'
-                  }`}
-                >
-                  {isTxPending ? 'Transaction...' : 'Start voting'}
-                </button>
               )}
               {isClient && isOngoingFinal && !isVotingExpired && (
                 <div className="mt-2 grid gap-2 md:grid-cols-3">
@@ -550,17 +589,24 @@ export default function Page() {
                   ))}
                 </div>
               )}
+
+              {/* Close vote (after expiration) */}
               {isClient && isVotingExpired && (
                 <button
-                  onClick={closeElectionAfterVoteExpiration}
+                  onClick={handleCloseElection}
                   disabled={isTxPending}
-                  className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                    isTxPending ? 'fr-btn-muted' : 'fr-btn-danger'
-                  }`}
+                  className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${isTxPending ? 'fr-btn-muted' : 'fr-btn-danger'}`}
                 >
                   {isTxPending ? 'Transaction...' : 'Close vote'}
                 </button>
               )}
+
+              {/* Vote error (shared between vote + close) */}
+              {isClient && voteError && (
+                <p className="text-sm text-[var(--fr-red)]">{voteError}</p>
+              )}
+
+              {/* Voting status messages */}
               {isClient && isOngoingFinal && !hasPassportValue && (
                 <p className="mt-2 text-sm text-[var(--fr-red)]">
                   You need a passport to vote.
@@ -576,48 +622,81 @@ export default function Page() {
                   You cannot vote while your vote is delegated.
                 </p>
               )}
-              {isClient && isCountingFinal && (
-                <button
-                  onClick={handleCountVotes}
-                  disabled={isTxPending}
-                  className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                    isTxPending ? 'fr-btn-muted' : 'fr-btn-primary'
-                  }`}
-                >
-                  {isTxPending ? 'Transaction...' : 'Count votes'}
-                </button>
-              )}
-              {isClient && countResult && (
+
+              {/* Vote results (ended) */}
+              {isClient && isEndedFinal && voteCount && (
                 <div className="fr-panel-muted mt-3 p-3 text-sm text-[var(--fr-white)]">
-                  <div className="text-xs fr-muted">Last count result</div>
-                  <div className="mt-1 font-semibold">
-                    {countResult.type === 'VOTED' ? 'Accepted' : 'Refused'}
-                  </div>
-                  <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  <div className="text-xs fr-muted">Vote results</div>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
                     <div>
                       <div className="text-xs fr-muted">YES</div>
-                      <div>{countResult.yes.toString()}</div>
+                      <div>{voteCount[0].toString()}</div>
                     </div>
                     <div>
                       <div className="text-xs fr-muted">NO</div>
-                      <div>{countResult.no.toString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs fr-muted">ABSTENTION</div>
-                      <div>{countResult.abstention.toString()}</div>
+                      <div>{voteCount[1].toString()}</div>
                     </div>
                   </div>
                 </div>
               )}
             </div>
           )}
-          {proposal && isEmptyProposal && (
-            <p className="mt-4 text-sm fr-muted">
-              Latest proposal slot is empty.
-            </p>
+          {currentProposal && isEmptyProposal && (
+            <p className="mt-4 text-sm fr-muted">Latest proposal slot is empty.</p>
           )}
           {isProposalLoading && <p className="mt-4 text-sm">Loading proposal...</p>}
         </section>
+
+        {/* Past proposals */}
+        {pastProposalIds.length > 0 && (
+          <section className="fr-panel p-6">
+            <h2 className="text-lg font-medium">Past Proposals</h2>
+            <div className="mt-4 flex flex-col gap-3">
+              {[...pastProposalIds].reverse().map((id, reversedIndex) => {
+                const index = pastProposalIds.length - 1 - reversedIndex;
+                const p = pastProposalsData?.[index]?.result as ProposalTuple | undefined;
+                const votes = pastVoteCountsData?.[index]?.result as readonly [bigint, bigint] | undefined;
+                const catLabel = p
+                  ? CATEGORY_OPTIONS.find((opt) => opt.value === Number(p[2]))?.label
+                  : undefined;
+
+                return (
+                  <div key={id.toString()} className="fr-panel-muted grid gap-3 p-4 text-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-xs fr-muted">#{id.toString()}</div>
+                        <div className="font-medium text-[var(--fr-white)]">
+                          {p ? p[0] : 'Loading...'}
+                        </div>
+                      </div>
+                      {catLabel && (
+                        <span className="rounded-full px-2.5 py-1 text-xs font-medium fr-pill-blue shrink-0">
+                          {catLabel}
+                        </span>
+                      )}
+                    </div>
+                    {p && (
+                      <div className="text-xs fr-muted font-mono truncate">{p[3]}</div>
+                    )}
+                    {votes && (
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="fr-panel rounded-lg px-3 py-2">
+                          <div className="fr-muted">YES</div>
+                          <div className="font-semibold text-[var(--fr-white)]">{votes[0].toString()}</div>
+                        </div>
+                        <div className="fr-panel rounded-lg px-3 py-2">
+                          <div className="fr-muted">NO</div>
+                          <div className="font-semibold text-[var(--fr-white)]">{votes[1].toString()}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
       </div>
     </main>
   );
