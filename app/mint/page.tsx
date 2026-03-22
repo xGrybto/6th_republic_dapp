@@ -10,16 +10,23 @@ import {
 } from 'wagmi';
 import {
   type Abi,
-  type Address,
-  isAddress,
   ContractFunctionRevertedError,
   type SimulateContractParameters,
 } from 'viem';
+
+import { countries } from 'countries-list';
 
 import o from "@/abi/Orchestrator.json";
 import passport from "@/abi/SixRPassport.json";
 import { ORCHESTRATOR_ADDRESS } from '@/app/lib/contracts';
 import { useAutoDismiss } from '@/app/lib/hooks';
+import { validateInput } from '@/app/lib/utils';
+
+// ─── Countries ────────────────────────────────────────────────────────────────
+
+const COUNTRY_NAMES = Object.values(countries)
+  .map((c) => c.name)
+  .sort();
 
 // ─── ABIs ─────────────────────────────────────────────────────────────────────
 
@@ -44,39 +51,25 @@ export default function Page() {
     functionName: 'passport',
   });
 
-  const { data: orchestratorOwner } = useReadContract({
-    address: ORCHESTRATOR_ADDRESS,
-    abi: ORCHESTRATOR_ABI,
-    functionName: 'owner',
-  });
-
-  const { data: isPaused } = useReadContract({
+  const { data: hasPassport } = useReadContract({
     address: rawPassportAddress as `0x${string}` | undefined,
     abi: PASSPORT_ABI,
-    functionName: 'paused',
-    query: { enabled: !!rawPassportAddress },
+    functionName: 'hasPassport',
+    args: address ? [address] : undefined,
+    query: { enabled: !!rawPassportAddress && !!address },
   });
 
   const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
 
   // ─── Derived state ────────────────────────────────────────────────────────
 
-  const isPassportPaused = isPaused === true;
-  const isOwner =
-    typeof orchestratorOwner === 'string' &&
-    typeof address === 'string' &&
-    orchestratorOwner.toLowerCase() === address.toLowerCase();
+  const alreadyMinted = hasPassport === true || isTxConfirmed;
 
   // ─── UI state ─────────────────────────────────────────────────────────────
 
   const [form, setForm] = useState({
-    recipient: '' as Address | '',
-    firstName: '',
-    lastName: '',
+    pseudo: '',
     nationality: '',
-    birthDate: '',
-    birthPlace: '',
-    height: '',
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [mintError, setMintError] = useState<string | null>(null);
@@ -122,14 +115,10 @@ export default function Page() {
       setFormError('Connect your wallet first.');
       return;
     }
-    if (!isOwner) {
-      setFormError('Only the owner of the contract can mint passports.');
-      return;
-    }
-    if (!isAddress(form.recipient)) {
-      setFormError('Recipient address is invalid.');
-      return;
-    }
+    const pseudoError = validateInput(form.pseudo, 'Pseudo', 32);
+    if (pseudoError) { setFormError(pseudoError); return; }
+    const nationalityError = validateInput(form.nationality, 'Nationality', 50);
+    if (nationalityError) { setFormError(nationalityError); return; }
     setFormError(null);
     setMintError(null);
     simulateAndWrite(
@@ -137,15 +126,7 @@ export default function Page() {
         address: ORCHESTRATOR_ADDRESS,
         abi: ORCHESTRATOR_ABI,
         functionName: 'mintPassport',
-        args: [
-          form.recipient,
-          form.firstName,
-          form.lastName,
-          form.nationality,
-          form.birthDate,
-          form.birthPlace,
-          form.height,
-        ],
+        args: [form.pseudo, form.nationality],
       },
       setMintError,
     );
@@ -153,7 +134,7 @@ export default function Page() {
 
   // ─── Derived UI flags ─────────────────────────────────────────────────────
 
-  const isMintDisabled = !isConnected || !isOwner || isPending || isPassportPaused;
+  const isMintDisabled = !isConnected || isPending || alreadyMinted;
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -163,7 +144,7 @@ export default function Page() {
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-semibold tracking-tight">Mint Passport</h1>
           <p className="text-sm fr-muted">
-            Create an on-chain passport for a citizen.
+            Mint your own on-chain passport to join the 6th Republic.
           </p>
         </div>
 
@@ -178,96 +159,42 @@ export default function Page() {
           <form onSubmit={handleMint} className="mt-4 grid gap-4">
             <div className="grid gap-4 md:grid-cols-2">
               <label className="grid gap-2 text-sm fr-muted">
-                Recipient address
+                Pseudo
                 <input
-                  value={form.recipient}
-                  onChange={handleChange('recipient')}
-                  placeholder="0x..."
+                  value={form.pseudo}
+                  onChange={handleChange('pseudo')}
+                  maxLength={32}
                   required
                   className="fr-input rounded-xl px-3 py-2 text-sm"
                 />
               </label>
               <label className="grid gap-2 text-sm fr-muted">
                 Nationality
-                <input
+                <select
                   value={form.nationality}
-                  onChange={handleChange('nationality')}
+                  onChange={(e) => setForm((prev) => ({ ...prev, nationality: e.target.value }))}
                   required
                   className="fr-input rounded-xl px-3 py-2 text-sm"
-                />
+                >
+                  <option value="" disabled>Select a country</option>
+                  {COUNTRY_NAMES.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
               </label>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="grid gap-2 text-sm fr-muted">
-                First name
-                <input
-                  value={form.firstName}
-                  onChange={handleChange('firstName')}
-                  required
-                  className="fr-input rounded-xl px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="grid gap-2 text-sm fr-muted">
-                Last name
-                <input
-                  value={form.lastName}
-                  onChange={handleChange('lastName')}
-                  required
-                  className="fr-input rounded-xl px-3 py-2 text-sm"
-                />
-              </label>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              <label className="grid gap-2 text-sm fr-muted">
-                Birth date
-                <input
-                  value={form.birthDate}
-                  onChange={handleChange('birthDate')}
-                  placeholder="YYYY-MM-DD"
-                  required
-                  className="fr-input rounded-xl px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="grid gap-2 text-sm fr-muted">
-                Birth place
-                <input
-                  value={form.birthPlace}
-                  onChange={handleChange('birthPlace')}
-                  required
-                  className="fr-input rounded-xl px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="grid gap-2 text-sm fr-muted">
-                Height
-                <input
-                  value={form.height}
-                  onChange={handleChange('height')}
-                  placeholder="ex: 1m78"
-                  required
-                  className="fr-input rounded-xl px-3 py-2 text-sm"
-                />
-              </label>
-            </div>
-
-            {isPassportPaused && (
-              <p className="text-sm text-[var(--fr-red)]">
-                Passport contract is paused. Minting is disabled.
-              </p>
-            )}
             <button
               type="submit"
               disabled={isMintDisabled}
               className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${isMintDisabled ? 'fr-btn-muted' : 'fr-btn-primary'}`}
             >
-              {isPending ? 'Transaction...' : 'Mint passport'}
+              {isPending ? 'Transaction...' : alreadyMinted ? 'Passport minted' : 'Mint passport'}
             </button>
           </form>
 
           <div className="mt-4 space-y-2 text-sm fr-muted">
             {!isConnected && <p>Connect your wallet to enable the button.</p>}
-            {isConnected && !isOwner && <p>Connected wallet is not the owner of the contract.</p>}
             {formError && <p className="text-[var(--fr-red)]">{formError}</p>}
             {mintError && <p className="text-[var(--fr-red)]">{mintError}</p>}
             {isTxConfirmed && <p className="text-[var(--fr-blue)]">Passport minted successfully.</p>}

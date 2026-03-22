@@ -23,6 +23,7 @@ import o from "@/abi/Orchestrator.json";
 import { toAddress } from '@/app/lib/address';
 import { ORCHESTRATOR_ADDRESS } from '@/app/lib/contracts';
 import { useAutoDismiss } from '@/app/lib/hooks';
+import { validateInput } from '@/app/lib/utils';
 
 // ─── ABIs ─────────────────────────────────────────────────────────────────────
 
@@ -31,13 +32,6 @@ const PASSPORT_ABI = passport.abi as Abi;
 const ORCHESTRATOR_ABI = o.abi as Abi;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const CATEGORY_OPTIONS = [
-  { value: 0, label: 'ECOLOGY' },
-  { value: 1, label: 'EDUCATION' },
-  { value: 2, label: 'ECONOMY' },
-  { value: 3, label: 'DEFENSE' },
-] as const;
 
 const STATUS_OPTIONS = [
   { value: 0, label: 'ENDED' },
@@ -55,7 +49,6 @@ const VOTE_OPTIONS = [
 type ProposalTuple = readonly [
   string,        // title
   string,        // description
-  bigint,        // category (enum index)
   `0x${string}`, // creator
   bigint,        // creation timestamp
   bigint,        // voting start timestamp
@@ -102,6 +95,12 @@ export default function Page() {
     address: ORCHESTRATOR_ADDRESS,
     abi: ORCHESTRATOR_ABI,
     functionName: 'proposal',
+  });
+
+  const { data: orchestratorOwner } = useReadContract({
+    address: ORCHESTRATOR_ADDRESS,
+    abi: ORCHESTRATOR_ABI,
+    functionName: 'owner',
   });
 
   const passportAddress = toAddress(rawPassportAddress);
@@ -225,16 +224,18 @@ export default function Page() {
   // ─── Derived state ────────────────────────────────────────────────────────
 
   const currentProposal  = proposalData as ProposalTuple | undefined;
-  const isEmptyProposal  = currentProposal && currentProposal[4] === BigInt(0) && currentProposal[3] === zeroAddress;
-  const creationTime     = currentProposal ? BigInt(currentProposal[4]) : undefined;
-  const votingTime       = currentProposal ? BigInt(currentProposal[5]) : undefined;
-  const statusValue      = currentProposal ? BigInt(currentProposal[6]) : undefined;
+  const isEmptyProposal  = currentProposal && currentProposal[3] === BigInt(0) && currentProposal[2] === zeroAddress;
+  const creationTime     = currentProposal ? BigInt(currentProposal[3]) : undefined;
+  const votingTime       = currentProposal ? BigInt(currentProposal[4]) : undefined;
+  const statusValue      = currentProposal ? BigInt(currentProposal[5]) : undefined;
 
-  const categoryLabel = currentProposal
-    ? CATEGORY_OPTIONS.find((opt) => opt.value === Number(currentProposal[2]))?.label
-    : undefined;
+  const isOwner =
+    typeof orchestratorOwner === 'string' &&
+    typeof address === 'string' &&
+    orchestratorOwner.toLowerCase() === address.toLowerCase();
+
   const statusLabel = currentProposal
-    ? STATUS_OPTIONS.find((opt) => opt.value === Number(currentProposal[6]))?.label
+    ? STATUS_OPTIONS.find((opt) => opt.value === Number(currentProposal[5]))?.label
     : undefined;
 
   const isCreatedFinal = statusValue === BigInt(2) || statusLabel === 'CREATED';
@@ -292,7 +293,7 @@ export default function Page() {
 
   // ─── UI state ─────────────────────────────────────────────────────────────
 
-  const [form, setForm] = useState({ title: '', description: '', category: '0' });
+  const [form, setForm] = useState({ title: '', description: '' });
   const [formError, setFormError] = useState<string | null>(null);
   const [createProposalError, setCreateProposalError] = useState<string | null>(null);
   const [startVotingError, setStartVotingError] = useState<string | null>(null);
@@ -332,21 +333,20 @@ export default function Page() {
     event.preventDefault();
     const title = form.title.trim();
     const description = form.description.trim();
-    const categoryNumber = Number(form.category);
 
     // Guards: client-side checks before simulation
+    if (!isOwner) {
+      setFormError('Only the contract owner can create a proposal.');
+      return;
+    }
     if (!isEndedFinal) {
       setFormError('You cannot create a proposal while another one is active.');
       return;
     }
-    if (!title || !description) {
-      setFormError('Title and description are required.');
-      return;
-    }
-    if (!Number.isInteger(categoryNumber) || categoryNumber < 0 || categoryNumber > 255) {
-      setFormError('Category must be an integer between 0 and 255.');
-      return;
-    }
+    const titleError = validateInput(title, 'Title', 100);
+    if (titleError) { setFormError(titleError); return; }
+    const descriptionError = validateInput(description, 'Description', 500);
+    if (descriptionError) { setFormError(descriptionError); return; }
 
     setFormError(null);
     setCreateProposalError(null);
@@ -355,7 +355,7 @@ export default function Page() {
         address: ORCHESTRATOR_ADDRESS,
         abi: ORCHESTRATOR_ABI,
         functionName: 'createProposal',
-        args: [title, description, categoryNumber],
+        args: [title, description],
       },
       setCreateProposalError,
     );
@@ -406,7 +406,7 @@ export default function Page() {
     if (isTxConfirmed) {
       refetchCounter();
       refetchProposal();
-      setForm({ title: '', description: '', category: '0' });
+      setForm({ title: '', description: '' });
     }
   }, [isTxConfirmed, refetchCounter, refetchProposal]);
 
@@ -437,6 +437,7 @@ export default function Page() {
               <input
                 value={form.title}
                 onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                maxLength={100}
                 className="fr-input w-full rounded-xl px-3 py-2 text-sm"
                 required
               />
@@ -448,25 +449,10 @@ export default function Page() {
                 value={form.description}
                 onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
                 rows={4}
+                maxLength={500}
                 className="fr-input w-full rounded-xl px-3 py-2 text-sm"
                 required
               />
-            </label>
-
-            <label className="grid w-full gap-2 text-sm fr-muted">
-              Category
-              <select
-                value={form.category}
-                onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}
-                className="fr-input w-full rounded-xl px-3 py-2 text-sm"
-                required
-              >
-                {CATEGORY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
             </label>
 
             {!isEndedFinal && (
@@ -482,9 +468,9 @@ export default function Page() {
             )}
             <button
               type="submit"
-              disabled={!isConnected || isTxPending || !isEndedFinal}
+              disabled={!isConnected || !isOwner || isTxPending || !isEndedFinal}
               className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                !isConnected || isTxPending || !isEndedFinal ? 'fr-btn-muted' : 'fr-btn-primary'
+                !isConnected || !isOwner || isTxPending || !isEndedFinal ? 'fr-btn-muted' : 'fr-btn-primary'
               }`}
             >
               {isTxPending ? 'Transaction...' : 'Create proposal'}
@@ -527,18 +513,14 @@ export default function Page() {
                 <div className="text-xs fr-muted">Description</div>
                 <div className="text-[var(--fr-white)]">{currentProposal[1]}</div>
               </div>
-              <div className="grid gap-2 md:grid-cols-3">
-                <div>
-                  <div className="text-xs fr-muted">Category</div>
-                  <div>{categoryLabel ?? currentProposal[2].toString()}</div>
-                </div>
+              <div className="grid gap-2 md:grid-cols-2">
                 <div>
                   <div className="text-xs fr-muted">Creator</div>
-                  <div className="font-mono text-xs">{currentProposal[3]}</div>
+                  <div className="font-mono text-xs">{currentProposal[2]}</div>
                 </div>
                 <div>
                   <div className="text-xs fr-muted">Status</div>
-                  <div>{statusLabel ?? currentProposal[6].toString()}</div>
+                  <div>{statusLabel ?? currentProposal[5].toString()}</div>
                 </div>
               </div>
 
@@ -656,9 +638,6 @@ export default function Page() {
                 const index = pastProposalIds.length - 1 - reversedIndex;
                 const p = pastProposalsData?.[index]?.result as ProposalTuple | undefined;
                 const votes = pastVoteCountsData?.[index]?.result as readonly [bigint, bigint] | undefined;
-                const catLabel = p
-                  ? CATEGORY_OPTIONS.find((opt) => opt.value === Number(p[2]))?.label
-                  : undefined;
 
                 return (
                   <div key={id.toString()} className="fr-panel-muted grid gap-3 p-4 text-sm">
@@ -669,14 +648,9 @@ export default function Page() {
                           {p ? p[0] : 'Loading...'}
                         </div>
                       </div>
-                      {catLabel && (
-                        <span className="rounded-full px-2.5 py-1 text-xs font-medium fr-pill-blue shrink-0">
-                          {catLabel}
-                        </span>
-                      )}
                     </div>
                     {p && (
-                      <div className="text-xs fr-muted font-mono truncate">{p[3]}</div>
+                      <div className="text-xs fr-muted font-mono truncate">{p[2]}</div>
                     )}
                     {votes && (
                       <div className="grid grid-cols-2 gap-2 text-xs">
