@@ -4,10 +4,26 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useConnection } from 'wagmi';
+import { useConnection, useReadContract } from 'wagmi';
+import { type Abi } from 'viem';
+import o from '@/abi/Orchestrator.json';
+import { ORCHESTRATOR_ADDRESS } from '@/app/lib/contracts';
+
+const ORCHESTRATOR_ABI = o.abi as Abi;
 
 export default function Header() {
-  const { isConnected } = useConnection();
+  const { isConnected, address } = useConnection();
+
+  const { data: orchestratorOwner } = useReadContract({
+    address: ORCHESTRATOR_ADDRESS,
+    abi: ORCHESTRATOR_ABI,
+    functionName: 'owner',
+  });
+
+  const isOwner =
+    typeof orchestratorOwner === 'string' &&
+    typeof address === 'string' &&
+    orchestratorOwner.toLowerCase() === address.toLowerCase();
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
 
@@ -45,15 +61,15 @@ export default function Header() {
               <div className="flex gap-2">
                 <button
                   onClick={openChainModal}
+                  className="w-28 shrink-0 truncate rounded-xl border border-[var(--fr-border)] bg-[rgba(15,26,47,0.75)] px-3 py-2 text-xs text-[var(--fr-white)] transition hover:border-[rgba(155,188,255,0.5)]"
                   type="button"
-                  className="whitespace-nowrap rounded-xl border border-[var(--fr-border)] bg-[rgba(11,16,32,0.9)] px-3 py-2 text-xs text-[var(--fr-white)] backdrop-blur"
                 >
                   {chain.name}
                 </button>
                 <button
                   onClick={openAccountModal}
+                  className="w-28 shrink-0 truncate rounded-xl border border-[var(--fr-border)] bg-[rgba(15,26,47,0.75)] px-3 py-2 text-xs text-[var(--fr-white)] transition hover:border-[rgba(243,167,183,0.6)]"
                   type="button"
-                  className="whitespace-nowrap rounded-xl border border-[var(--fr-border)] bg-[rgba(11,16,32,0.9)] px-3 py-2 text-xs text-[var(--fr-white)] backdrop-blur"
                 >
                   {account.displayName}
                 </button>
@@ -99,10 +115,10 @@ export default function Header() {
             <Link href="/" className={linkClasses('/')}>Vote</Link>
             <Link href="/account" className={linkClasses('/account')}>Account</Link>
             <Link href="/mint" className={linkClasses('/mint')}>Mint</Link>
-            <Link href="/admin" className={linkClasses('/admin')}>Admin</Link>
+            {isOwner && <Link href="/admin" className={linkClasses('/admin')}>Admin</Link>}
           </nav>
 
-          <div className="mt-auto flex flex-col gap-3 p-6">
+          <div className="mt-auto hidden flex-col gap-3 p-6 lg:flex">
             <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${isConnected ? 'fr-pill-blue' : 'fr-pill-red'}`}>
               {isConnected ? 'Connected' : 'Disconnected'}
             </span>

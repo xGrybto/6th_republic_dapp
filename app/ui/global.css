@@ -74,6 +74,11 @@
   color: var(--fr-red);
 }
 
+.fr-pill-green {
+  background: rgba(100, 220, 150, 0.18);
+  color: #64dc96;
+}
+
 .fr-btn-primary {
   background: var(--fr-blue-strong);
   color: #0b1020;
