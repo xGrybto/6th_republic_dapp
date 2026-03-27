@@ -23,6 +23,7 @@ import o from "@/abi/Orchestrator.json";
 import { toAddress } from '@/app/lib/address';
 import { ORCHESTRATOR_ADDRESS } from '@/app/lib/contracts';
 import { useAutoDismiss } from '@/app/lib/hooks';
+import { validateInput } from '@/app/lib/utils';
 
 // ─── ABIs ─────────────────────────────────────────────────────────────────────
 
@@ -31,13 +32,6 @@ const PASSPORT_ABI = passport.abi as Abi;
 const ORCHESTRATOR_ABI = o.abi as Abi;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const CATEGORY_OPTIONS = [
-  { value: 0, label: 'ECOLOGY' },
-  { value: 1, label: 'EDUCATION' },
-  { value: 2, label: 'ECONOMY' },
-  { value: 3, label: 'DEFENSE' },
-] as const;
 
 const STATUS_OPTIONS = [
   { value: 0, label: 'ENDED' },
@@ -55,7 +49,6 @@ const VOTE_OPTIONS = [
 type ProposalTuple = readonly [
   string,        // title
   string,        // description
-  bigint,        // category (enum index)
   `0x${string}`, // creator
   bigint,        // creation timestamp
   bigint,        // voting start timestamp
@@ -102,6 +95,12 @@ export default function Page() {
     address: ORCHESTRATOR_ADDRESS,
     abi: ORCHESTRATOR_ABI,
     functionName: 'proposal',
+  });
+
+  const { data: orchestratorOwner } = useReadContract({
+    address: ORCHESTRATOR_ADDRESS,
+    abi: ORCHESTRATOR_ABI,
+    functionName: 'owner',
   });
 
   const passportAddress = toAddress(rawPassportAddress);
@@ -225,16 +224,18 @@ export default function Page() {
   // ─── Derived state ────────────────────────────────────────────────────────
 
   const currentProposal  = proposalData as ProposalTuple | undefined;
-  const isEmptyProposal  = currentProposal && currentProposal[4] === BigInt(0) && currentProposal[3] === zeroAddress;
-  const creationTime     = currentProposal ? BigInt(currentProposal[4]) : undefined;
-  const votingTime       = currentProposal ? BigInt(currentProposal[5]) : undefined;
-  const statusValue      = currentProposal ? BigInt(currentProposal[6]) : undefined;
+  const isEmptyProposal  = currentProposal && currentProposal[3] === BigInt(0) && currentProposal[2] === zeroAddress;
+  const creationTime     = currentProposal ? BigInt(currentProposal[3]) : undefined;
+  const votingTime       = currentProposal ? BigInt(currentProposal[4]) : undefined;
+  const statusValue      = currentProposal ? BigInt(currentProposal[5]) : undefined;
 
-  const categoryLabel = currentProposal
-    ? CATEGORY_OPTIONS.find((opt) => opt.value === Number(currentProposal[2]))?.label
-    : undefined;
+  const isOwner =
+    typeof orchestratorOwner === 'string' &&
+    typeof address === 'string' &&
+    orchestratorOwner.toLowerCase() === address.toLowerCase();
+
   const statusLabel = currentProposal
-    ? STATUS_OPTIONS.find((opt) => opt.value === Number(currentProposal[6]))?.label
+    ? STATUS_OPTIONS.find((opt) => opt.value === Number(currentProposal[5]))?.label
     : undefined;
 
   const isCreatedFinal = statusValue === BigInt(2) || statusLabel === 'CREATED';
@@ -292,7 +293,7 @@ export default function Page() {
 
   // ─── UI state ─────────────────────────────────────────────────────────────
 
-  const [form, setForm] = useState({ title: '', description: '', category: '0' });
+  const [form, setForm] = useState({ title: '', description: '' });
   const [formError, setFormError] = useState<string | null>(null);
   const [createProposalError, setCreateProposalError] = useState<string | null>(null);
   const [startVotingError, setStartVotingError] = useState<string | null>(null);
@@ -332,21 +333,20 @@ export default function Page() {
     event.preventDefault();
     const title = form.title.trim();
     const description = form.description.trim();
-    const categoryNumber = Number(form.category);
 
     // Guards: client-side checks before simulation
+    if (!isOwner) {
+      setFormError('Only the contract owner can create a proposal.');
+      return;
+    }
     if (!isEndedFinal) {
       setFormError('You cannot create a proposal while another one is active.');
       return;
     }
-    if (!title || !description) {
-      setFormError('Title and description are required.');
-      return;
-    }
-    if (!Number.isInteger(categoryNumber) || categoryNumber < 0 || categoryNumber > 255) {
-      setFormError('Category must be an integer between 0 and 255.');
-      return;
-    }
+    const titleError = validateInput(title, 'Title', 100);
+    if (titleError) { setFormError(titleError); return; }
+    const descriptionError = validateInput(description, 'Description', 500);
+    if (descriptionError) { setFormError(descriptionError); return; }
 
     setFormError(null);
     setCreateProposalError(null);
@@ -355,7 +355,7 @@ export default function Page() {
         address: ORCHESTRATOR_ADDRESS,
         abi: ORCHESTRATOR_ABI,
         functionName: 'createProposal',
-        args: [title, description, categoryNumber],
+        args: [title, description],
       },
       setCreateProposalError,
     );
@@ -406,7 +406,7 @@ export default function Page() {
     if (isTxConfirmed) {
       refetchCounter();
       refetchProposal();
-      setForm({ title: '', description: '', category: '0' });
+      setForm({ title: '', description: '' });
     }
   }, [isTxConfirmed, refetchCounter, refetchProposal]);
 
@@ -422,129 +422,89 @@ export default function Page() {
           </p>
         </div>
 
-        {/* Create a new proposal */}
-        <section className="fr-panel p-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">Create a new proposal</h2>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${isClient && isConnected ? 'fr-pill-blue' : 'fr-pill-red'}`}>
-              {isClient && isConnected ? 'Connected' : 'Disconnected'}
-            </span>
-          </div>
+        {/* Create a new proposal — owner only */}
+        {isClient && isOwner && (
+          <section className="fr-panel p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-medium">Create a new proposal</h2>
+              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${isConnected ? 'fr-pill-blue' : 'fr-pill-red'}`}>
+                {isConnected ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
 
-          <form onSubmit={handleCreateProposal} className="mt-4 grid w-full max-w-2xl gap-4">
-            <label className="grid w-full gap-2 text-sm fr-muted">
-              Title
-              <input
-                value={form.title}
-                onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-                className="fr-input w-full rounded-xl px-3 py-2 text-sm"
-                required
-              />
-            </label>
+            <form onSubmit={handleCreateProposal} className="mt-4 grid w-full max-w-2xl gap-4">
+              <label className="grid w-full gap-2 text-sm fr-muted">
+                Title
+                <input
+                  value={form.title}
+                  onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                  maxLength={100}
+                  className="fr-input w-full rounded-xl px-3 py-2 text-sm"
+                  required
+                />
+              </label>
 
-            <label className="grid w-full gap-2 text-sm fr-muted">
-              Description
-              <textarea
-                value={form.description}
-                onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-                rows={4}
-                className="fr-input w-full rounded-xl px-3 py-2 text-sm"
-                required
-              />
-            </label>
+              <label className="grid w-full gap-2 text-sm fr-muted">
+                Description
+                <textarea
+                  value={form.description}
+                  onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+                  rows={4}
+                  maxLength={500}
+                  className="fr-input w-full rounded-xl px-3 py-2 text-sm"
+                  required
+                />
+              </label>
 
-            <label className="grid w-full gap-2 text-sm fr-muted">
-              Category
-              <select
-                value={form.category}
-                onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}
-                className="fr-input w-full rounded-xl px-3 py-2 text-sm"
-                required
+              {!isEndedFinal && (
+                <p className="text-sm text-[var(--fr-blue)]">
+                  Vote ongoing, proposal creation disabled.
+                </p>
+              )}
+              {formError && (
+                <p className="text-sm text-[var(--fr-red)]">{formError}</p>
+              )}
+              {createProposalError && (
+                <p className="text-sm text-[var(--fr-red)]">{createProposalError}</p>
+              )}
+              <button
+                type="submit"
+                disabled={!isConnected || isTxPending || !isEndedFinal}
+                className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                  !isConnected || isTxPending || !isEndedFinal ? 'fr-btn-muted' : 'fr-btn-primary'
+                }`}
               >
-                {CATEGORY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {!isEndedFinal && (
-              <p className="text-sm text-[var(--fr-blue)]">
-                Vote ongoing, proposal creation disabled.
-              </p>
-            )}
-            {formError && (
-              <p className="text-sm text-[var(--fr-red)]">{formError}</p>
-            )}
-            {createProposalError && (
-              <p className="text-sm text-[var(--fr-red)]">{createProposalError}</p>
-            )}
-            <button
-              type="submit"
-              disabled={!isConnected || isTxPending || !isEndedFinal}
-              className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                !isConnected || isTxPending || !isEndedFinal ? 'fr-btn-muted' : 'fr-btn-primary'
-              }`}
-            >
-              {isTxPending ? 'Transaction...' : 'Create proposal'}
-            </button>
-          </form>
-        </section>
+                {isTxPending ? 'Transaction...' : 'Create proposal'}
+              </button>
+            </form>
+          </section>
+        )}
 
         {/* Current proposal */}
         <section className="fr-panel p-6">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-medium">Current Proposal</h2>
-            <span className="fr-badge rounded-full bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-xs font-medium text-[var(--fr-muted)]">
-              {isCounterLoading
-                ? 'Loading...'
-                : currentProposalId !== undefined
-                  ? `#${currentProposalId.toString()}`
-                  : 'None'}
-            </span>
           </div>
 
-          <div className="mt-4 space-y-3 text-sm fr-muted">
-            {counterError && (
-              <p className="text-[var(--fr-red)]">Error: {counterError.message}</p>
-            )}
-            {proposalError && (
-              <p className="text-[var(--fr-red)]">Error: {proposalError.message}</p>
-            )}
-            {!isProposalLoading && !proposalError && currentProposal === undefined && (
-              <p>No proposal data available.</p>
-            )}
-          </div>
+          {counterError && (
+            <p className="mt-4 text-sm text-[var(--fr-red)]">Error: {counterError.message}</p>
+          )}
+          {proposalError && (
+            <p className="mt-4 text-sm text-[var(--fr-red)]">Error: {proposalError.message}</p>
+          )}
+          {isProposalLoading && <p className="mt-4 text-sm fr-muted">Loading proposal...</p>}
 
-          {currentProposal && !isEmptyProposal && (
-            <div className="fr-panel-muted mt-4 grid gap-3 p-4 text-sm">
+          {/* Active proposal card */}
+          {currentProposal && !isEmptyProposal && (isCreatedFinal || isOngoingFinal) && (
+            <div className="mt-4 grid gap-4">
               <div>
-                <div className="text-xs fr-muted">Title</div>
-                <div className="font-medium text-[var(--fr-white)]">{currentProposal[0]}</div>
-              </div>
-              <div>
-                <div className="text-xs fr-muted">Description</div>
-                <div className="text-[var(--fr-white)]">{currentProposal[1]}</div>
-              </div>
-              <div className="grid gap-2 md:grid-cols-3">
-                <div>
-                  <div className="text-xs fr-muted">Category</div>
-                  <div>{categoryLabel ?? currentProposal[2].toString()}</div>
-                </div>
-                <div>
-                  <div className="text-xs fr-muted">Creator</div>
-                  <div className="font-mono text-xs">{currentProposal[3]}</div>
-                </div>
-                <div>
-                  <div className="text-xs fr-muted">Status</div>
-                  <div>{statusLabel ?? currentProposal[6].toString()}</div>
-                </div>
+                <div className="text-xl font-semibold text-[var(--fr-white)]">{currentProposal[0]}</div>
+                <div className="mt-2 text-sm fr-muted leading-relaxed">{currentProposal[1]}</div>
               </div>
 
               {/* Preparation countdown + start voting */}
               {isClient && isCreatedFinal && preparationCountdown && (
-                <p className="mt-2 text-sm text-[var(--fr-blue)]">
+                <p className="text-sm text-[var(--fr-blue)]">
                   Preparation ends in: {preparationCountdown}
                 </p>
               )}
@@ -553,7 +513,7 @@ export default function Page() {
                   <button
                     onClick={handleStartVoting}
                     disabled={isTxPending}
-                    className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${isTxPending ? 'fr-btn-muted' : 'fr-btn-primary'}`}
+                    className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${isTxPending ? 'fr-btn-muted' : 'fr-btn-primary'}`}
                   >
                     {isTxPending ? 'Transaction...' : 'Start voting'}
                   </button>
@@ -565,12 +525,12 @@ export default function Page() {
 
               {/* Voting countdown + vote buttons */}
               {isClient && isOngoingFinal && votingCountdown && (
-                <p className="mt-2 text-sm text-[var(--fr-blue)]">
+                <p className="text-sm text-[var(--fr-blue)]">
                   Voting ends in: {votingCountdown}
                 </p>
               )}
               {isClient && isOngoingFinal && !isVotingExpired && (
-                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                <div className="grid gap-2 md:grid-cols-2">
                   {VOTE_OPTIONS.map((option) => (
                     <button
                       key={option.value}
@@ -595,89 +555,79 @@ export default function Page() {
                 <button
                   onClick={handleCloseElection}
                   disabled={isTxPending}
-                  className={`mt-2 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${isTxPending ? 'fr-btn-muted' : 'fr-btn-danger'}`}
+                  className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${isTxPending ? 'fr-btn-muted' : 'fr-btn-danger'}`}
                 >
                   {isTxPending ? 'Transaction...' : 'Close vote'}
                 </button>
               )}
 
-              {/* Vote error (shared between vote + close) */}
+              {/* Vote error */}
               {isClient && voteError && (
                 <p className="text-sm text-[var(--fr-red)]">{voteError}</p>
               )}
 
               {/* Voting status messages */}
               {isClient && isOngoingFinal && !hasPassportValue && (
-                <p className="mt-2 text-sm text-[var(--fr-red)]">
-                  You need a passport to vote.
-                </p>
+                <p className="text-sm text-[var(--fr-red)]">You need a passport to vote.</p>
               )}
               {isClient && isOngoingFinal && hasVotedValue && (
-                <p className="mt-2 text-sm text-[var(--fr-blue)]">
-                  You already voted on this proposal.
-                </p>
+                <p className="text-sm text-[var(--fr-blue)]">You already voted on this proposal.</p>
               )}
               {isClient && isOngoingFinal && isVoteDelegated && (
-                <p className="mt-2 text-sm text-[var(--fr-red)]">
-                  You cannot vote while your vote is delegated.
-                </p>
-              )}
-
-              {/* Vote results (ended) */}
-              {isClient && isEndedFinal && voteCount && (
-                <div className="fr-panel-muted mt-3 p-3 text-sm text-[var(--fr-white)]">
-                  <div className="text-xs fr-muted">Vote results</div>
-                  <div className="mt-2 grid gap-2 md:grid-cols-2">
-                    <div>
-                      <div className="text-xs fr-muted">YES</div>
-                      <div>{voteCount[0].toString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs fr-muted">NO</div>
-                      <div>{voteCount[1].toString()}</div>
-                    </div>
-                  </div>
-                </div>
+                <p className="text-sm text-[var(--fr-red)]">You cannot vote while your vote is delegated.</p>
               )}
             </div>
           )}
-          {currentProposal && isEmptyProposal && (
-            <p className="mt-4 text-sm fr-muted">Latest proposal slot is empty.</p>
+
+          {/* Waiting message */}
+          {!isProposalLoading && (isEndedFinal || isEmptyProposal || currentProposal === undefined) && (
+            <p className="mt-6 text-center text-sm fr-muted">Waiting for a new vote proposal</p>
           )}
-          {isProposalLoading && <p className="mt-4 text-sm">Loading proposal...</p>}
         </section>
 
-        {/* Past proposals */}
-        {pastProposalIds.length > 0 && (
+        {/* Past proposals — includes current if ended */}
+        {(pastProposalIds.length > 0 || (isEndedFinal && currentProposal && !isEmptyProposal)) && (
           <section className="fr-panel p-6">
             <h2 className="text-lg font-medium">Past Proposals</h2>
             <div className="mt-4 flex flex-col gap-3">
+
+              {/* Current proposal pinned at top if ended */}
+              {isEndedFinal && currentProposal && !isEmptyProposal && (
+                <div className="fr-panel-muted grid gap-3 p-4 text-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xs fr-muted">#{currentProposalId?.toString()}</div>
+                      <div className="font-medium text-[var(--fr-white)]">{currentProposal[0]}</div>
+                    </div>
+                  </div>
+                  {voteCount && (
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="fr-panel rounded-lg px-3 py-2">
+                        <div className="fr-muted">YES</div>
+                        <div className="font-semibold text-[var(--fr-white)]">{voteCount[0].toString()}</div>
+                      </div>
+                      <div className="fr-panel rounded-lg px-3 py-2">
+                        <div className="fr-muted">NO</div>
+                        <div className="font-semibold text-[var(--fr-white)]">{voteCount[1].toString()}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {[...pastProposalIds].reverse().map((id, reversedIndex) => {
                 const index = pastProposalIds.length - 1 - reversedIndex;
                 const p = pastProposalsData?.[index]?.result as ProposalTuple | undefined;
                 const votes = pastVoteCountsData?.[index]?.result as readonly [bigint, bigint] | undefined;
-                const catLabel = p
-                  ? CATEGORY_OPTIONS.find((opt) => opt.value === Number(p[2]))?.label
-                  : undefined;
 
                 return (
                   <div key={id.toString()} className="fr-panel-muted grid gap-3 p-4 text-sm">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="text-xs fr-muted">#{id.toString()}</div>
-                        <div className="font-medium text-[var(--fr-white)]">
-                          {p ? p[0] : 'Loading...'}
-                        </div>
+                    <div>
+                      <div className="text-xs fr-muted">#{id.toString()}</div>
+                      <div className="font-medium text-[var(--fr-white)]">
+                        {p ? p[0] : 'Loading...'}
                       </div>
-                      {catLabel && (
-                        <span className="rounded-full px-2.5 py-1 text-xs font-medium fr-pill-blue shrink-0">
-                          {catLabel}
-                        </span>
-                      )}
                     </div>
-                    {p && (
-                      <div className="text-xs fr-muted font-mono truncate">{p[3]}</div>
-                    )}
                     {votes && (
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         <div className="fr-panel rounded-lg px-3 py-2">

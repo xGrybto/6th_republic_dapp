@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="overflow-x-hidden">
         <Providers>
           <Header />
-          <div className="lg:pr-60">{children}</div>
+          <div className="pt-16 lg:pt-0 lg:pr-60">{children}</div>
         </Providers>
       </body>
     </html>

@@ -16,16 +16,15 @@ const PROPOSAL_ABI = proposal.abi as Abi;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORY_OPTIONS = ['ECOLOGY', 'EDUCATION', 'ECONOMY', 'DEFENSE'] as const;
 const STATUS_OPTIONS = ['ENDED', 'ONGOING', 'CREATED'] as const;
 
 type ProposalTuple = readonly [
-  string,   // title
-  string,   // description
-  bigint,   // category (enum index)
+  string,        // title
+  string,        // description
   `0x${string}`, // creator
-  bigint,   // creation timestamp
-  bigint,   // status (enum index)
+  bigint,        // creation timestamp
+  bigint,        // voting start timestamp
+  bigint,        // status (enum index)
   `0x${string}`, // closed block hash
 ];
 
@@ -149,11 +148,6 @@ export default function AdminPage() {
 
   const proposalData = latestProposal as ProposalTuple | undefined;
 
-  const latestCategory =
-    proposalData && Number(proposalData[2]) < CATEGORY_OPTIONS.length
-      ? CATEGORY_OPTIONS[Number(proposalData[2])]
-      : proposalData?.[2]?.toString();
-
   const latestStatus =
     proposalData && Number(proposalData[5]) < STATUS_OPTIONS.length
       ? STATUS_OPTIONS[Number(proposalData[5])]
@@ -182,9 +176,7 @@ export default function AdminPage() {
         {isConnected && !isAdmin && (
           <section className="fr-panel p-6">
             <h2 className="text-lg font-medium text-[var(--fr-red)]">Access denied</h2>
-            <p className="mt-2 fr-muted">This page is only available to the Orchestrator owner.</p>
-            <p className="mt-2 text-xs fr-muted">Connected: {address}</p>
-            <p className="text-xs fr-muted">Owner: {String(orchestratorOwner ?? 'unknown')}</p>
+            <p className="mt-2 fr-muted">This page is only available to the owner.</p>
             {orchestratorOwnerError && (
               <p className="mt-2 text-sm text-[var(--fr-red)]">
                 Error: {orchestratorOwnerError.message}
@@ -200,8 +192,8 @@ export default function AdminPage() {
             <section className="fr-panel p-6">
               <h2 className="text-lg font-medium">Orchestrator</h2>
               <div className="mt-4 space-y-2 text-sm fr-muted">
-                <p>Address: {ORCHESTRATOR_ADDRESS}</p>
                 <p>Owner: {String(orchestratorOwner)}</p>
+                <p>Address: {ORCHESTRATOR_ADDRESS}</p>
                 <p>Passport: {String(passportAddress ?? 'unknown')}</p>
                 <p>Proposal: {String(proposalAddress ?? 'unknown')}</p>
               </div>
@@ -242,9 +234,8 @@ export default function AdminPage() {
                 <div className="fr-panel-muted mt-4 space-y-2 p-4 text-sm fr-muted">
                   <p>Title: {proposalData[0]}</p>
                   <p>Description: {proposalData[1]}</p>
-                  <p>Category: {String(latestCategory ?? 'unknown')}</p>
-                  <p>Creator: {proposalData[3]}</p>
-                  <p>Creation time: {proposalData[4].toString()}</p>
+                  <p>Creator: {proposalData[2]}</p>
+                  <p>Creation time: {proposalData[3].toString()}</p>
                   <p>Status: {String(latestStatus ?? 'unknown')}</p>
                   <p>Closed block hash: {proposalData[6]}</p>
                 </div>
