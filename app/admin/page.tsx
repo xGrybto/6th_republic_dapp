@@ -104,7 +104,7 @@ export default function AdminPage() {
     typeof address === 'string' &&
     orchestratorOwner.toLowerCase() === address.toLowerCase();
 
-  const totalProposals = typeof proposalCounter === 'bigint' ? Number(proposalCounter) : null;
+  const totalProposals = typeof proposalCounter === 'bigint' ? Number(proposalCounter) - 1 : null;
   const isPaused       = passportPaused === true;
 
   // ─── Event feeds (last 50 blocks) ──────────────────────────────────────────
