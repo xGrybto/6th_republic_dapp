@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {children}
             <footer className="flex items-center justify-center gap-5 px-6 py-6">
               <a
-                href="https://github.com/xGrybto"
+                href="https://github.com/xGrybto/6th_republic_dapp/blob/main/README.md"
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="GitHub"
