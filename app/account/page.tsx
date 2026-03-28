@@ -143,8 +143,9 @@ export default function Page() {
     try {
       const json = JSON.parse(atob(tokenURIData.replace('data:application/json;base64,', '')));
       const image: string = json.image ?? '';
+      const gateway = process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? 'https://dweb.link/ipfs/';
       return image.startsWith('ipfs://')
-        ? image.replace('ipfs://', 'https://ipfs.io/ipfs/')
+        ? image.replace('ipfs://', gateway)
         : image;
     } catch {
       return null;
