@@ -107,16 +107,49 @@ export default function Page() {
     query: { enabled: !!address },
   });
 
+  const { data: passportAttributes } = useReadContract({
+    address: passportAddress,
+    abi: PASSPORT_ABI,
+    functionName: 'getPassportAttributes',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address && hasPassport === true },
+  });
+
+  const { data: tokenURIData } = useReadContract({
+    address: passportAddress,
+    abi: PASSPORT_ABI,
+    functionName: 'getTokenURI',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address && hasPassport === true },
+  });
+
   const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
 
   // ─── Derived state ────────────────────────────────────────────────────────
 
-  const hasPassportValue       = hasPassport === true;
-  const hasDelegatedModeValue  = delegatedModeRaw === true || delegatedModeRaw === false;
+  const hasPassportValue         = hasPassport === true;
+  const hasDelegatedModeValue    = delegatedModeRaw === true || delegatedModeRaw === false;
   const isDelegatedModeActivated = delegatedModeRaw === true;
-  const isVoteDelegated        = typeof representative === 'string' && representative !== zeroAddress;
-  const isPassportPaused       = isPaused === true;
-  const delegatePowersValue    = typeof delegatePowers === 'bigint' ? delegatePowers : BigInt(0);
+  const isVoteDelegated          = typeof representative === 'string' && representative !== zeroAddress;
+  const isPassportPaused         = isPaused === true;
+  const delegatePowersValue      = typeof delegatePowers === 'bigint' ? delegatePowers : BigInt(0);
+
+  const [pseudo, nationality] = Array.isArray(passportAttributes)
+    ? [passportAttributes[0] as string, passportAttributes[1] as string]
+    : [null, null];
+
+  const nftImageUrl = (() => {
+    if (typeof tokenURIData !== 'string') return null;
+    try {
+      const json = JSON.parse(atob(tokenURIData.replace('data:application/json;base64,', '')));
+      const image: string = json.image ?? '';
+      return image.startsWith('ipfs://')
+        ? image.replace('ipfs://', 'https://ipfs.io/ipfs/')
+        : image;
+    } catch {
+      return null;
+    }
+  })();
 
   // ─── UI state ─────────────────────────────────────────────────────────────
 
@@ -217,30 +250,25 @@ export default function Page() {
         {/* Profile */}
         <section className="fr-panel p-6">
           <div className="flex items-start gap-6">
-            {hasPassportValue && (
+            {hasPassportValue && nftImageUrl && (
               <img
-                src="https://ipfs.io/ipfs/bafkreiezyua6ixhguyedklrds6wyiniokeovqay2x6zvvvtzfdhw4p3o7e"
+                src={nftImageUrl}
                 alt="Passport NFT"
                 className="w-32 flex-shrink-0 rounded-xl"
               />
             )}
             <div className="flex flex-1 flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-medium">
-                  Passport <Tooltip text="A Soulbound Token (SBT) — non-transferable and unique to your address." />
-                </h2>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${hasPassportValue ? 'fr-pill-blue' : 'fr-pill-red'}`}>
-                  {isPassportLoading ? 'Loading...' : hasPassportValue ? 'Yes' : 'No'}
-                </span>
-              </div>
+              <h2 className="text-lg font-medium">
+                Passport <Tooltip text="A Soulbound Token (SBT) — non-transferable and unique to your address." />
+              </h2>
               <div className="grid gap-2 text-sm">
                 <div className="flex items-center justify-between border-b border-[var(--fr-border)] pb-2">
                   <span className="fr-muted">Pseudo</span>
-                  <span className="fr-muted opacity-40">—</span>
+                  <span className="text-[var(--fr-white)]">{pseudo ?? '—'}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="fr-muted">Nationality</span>
-                  <span className="fr-muted opacity-40">—</span>
+                  <span className="text-[var(--fr-white)]">{nationality ?? '—'}</span>
                 </div>
               </div>
               <div className="space-y-2 text-sm fr-muted">

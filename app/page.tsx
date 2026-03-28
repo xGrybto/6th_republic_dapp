@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useBlock,
   useConnection,
@@ -13,6 +13,7 @@ import {
 import {
   type Abi,
   zeroAddress,
+  parseAbiItem,
   ContractFunctionRevertedError,
   type SimulateContractParameters,
 } from 'viem';
@@ -411,6 +412,86 @@ export default function Page() {
     }
   }, [isTxConfirmed, refetchCounter, refetchProposal]);
 
+  // ─── Recent voters — floating pseudos ────────────────────────────────────
+
+  const [voterAddresses, setVoterAddresses] = useState<`0x${string}`[]>([]);
+  const seenVotersRef = useRef<Set<string>>(new Set());
+  const [animatingPseudos, setAnimatingPseudos] = useState<Array<{ id: number; pseudo: string; delay: number }>>([]);
+  const nextIdRef = useRef(0);
+
+  // Reset when proposal changes
+  useEffect(() => {
+    seenVotersRef.current = new Set();
+    setVoterAddresses([]);
+    setAnimatingPseudos([]);
+  }, [currentProposalId]);
+
+  // Fetch Voted events from last 50 blocks for the current proposal
+  useEffect(() => {
+    if (!publicClient || !proposalAddress || currentProposalId === undefined || !isOngoingFinal || !latestBlock) return;
+
+    const fromBlock = latestBlock.number > BigInt(50) ? latestBlock.number - BigInt(50) : BigInt(0);
+
+    publicClient.getLogs({
+      address: proposalAddress,
+      event: parseAbiItem('event Voted(uint256 indexed proposalId, address indexed voter)'),
+      args: { proposalId: currentProposalId },
+      fromBlock,
+      toBlock: 'latest',
+    }).then((logs) => {
+      const addresses = logs
+        .map((log) => (log.args as { voter?: `0x${string}` }).voter)
+        .filter((a): a is `0x${string}` => !!a);
+      setVoterAddresses([...new Set(addresses)]);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicClient, proposalAddress, isOngoingFinal, currentProposalId, latestBlock?.number]);
+
+  // Batch-fetch passport attributes for all voter addresses
+  const { data: voterAttributesData } = useReadContracts({
+    contracts: voterAddresses.map((addr) => ({
+      address: passportAddress!,
+      abi: PASSPORT_ABI,
+      functionName: 'getPassportAttributes' as const,
+      args: [addr] as const,
+    })),
+    query: { enabled: voterAddresses.length > 0 && !!passportAddress },
+  });
+
+  const voterPseudos = useMemo(() => {
+    if (!voterAttributesData) return [];
+    return voterAddresses.flatMap((addr, i) => {
+      const r = voterAttributesData[i];
+      if (r?.status === 'success' && Array.isArray(r.result)) {
+        return [{ addr, pseudo: r.result[0] as string }];
+      }
+      return [];
+    });
+  }, [voterAttributesData, voterAddresses]);
+
+  // Trigger floating animation for new voters
+  useEffect(() => {
+    if (voterPseudos.length === 0) return;
+    const newVoters = voterPseudos.filter(({ addr }) => !seenVotersRef.current.has(addr.toLowerCase()));
+    if (newVoters.length === 0) return;
+
+    newVoters.forEach(({ addr }) => seenVotersRef.current.add(addr.toLowerCase()));
+
+    const newItems = newVoters.map(({ pseudo }, i) => ({
+      id: nextIdRef.current++,
+      pseudo,
+      delay: i * 400,
+    }));
+    setAnimatingPseudos((prev) => [...prev, ...newItems]);
+
+    const removeAfter = 4000 + newVoters.length * 400;
+    const timer = setTimeout(() => {
+      const ids = new Set(newItems.map((x) => x.id));
+      setAnimatingPseudos((prev) => prev.filter((x) => !ids.has(x.id)));
+    }, removeAfter);
+    return () => clearTimeout(timer);
+  }, [voterPseudos]);
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -469,7 +550,7 @@ export default function Page() {
               </span>
             </div>
 
-            <form onSubmit={handleCreateProposal} className="mt-4 grid w-full max-w-2xl gap-4">
+            <form onSubmit={handleCreateProposal} className="mt-4 grid w-full gap-4">
               <label className="grid w-full gap-2 text-sm fr-muted">
                 Title
                 <input
@@ -539,6 +620,21 @@ export default function Page() {
                 <div className="text-xl font-semibold text-[var(--fr-white)]">{currentProposal[0]}</div>
                 <div className="mt-2 text-sm fr-muted leading-relaxed">{currentProposal[1]}</div>
               </div>
+
+              {/* Floating voter pseudos */}
+              {isClient && isOngoingFinal && animatingPseudos.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {animatingPseudos.map(({ id, pseudo, delay }) => (
+                    <span
+                      key={id}
+                      className="inline-block rounded-full px-3 py-1 text-xs font-medium fr-pill-blue"
+                      style={{ animation: `fr-voter-float 4s ease-out ${delay}ms both` }}
+                    >
+                      ✓ {pseudo}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               {/* Preparation countdown + start voting */}
               {isClient && isCreatedFinal && preparationCountdown && (
