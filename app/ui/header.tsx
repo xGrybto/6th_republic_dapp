@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import logo from './white_original.svg';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -33,10 +34,10 @@ export default function Header() {
   }, [pathname]);
 
   const linkClasses = (href: string) =>
-    `w-full border-b border-[var(--fr-border)] py-3 text-center text-sm transition last:border-b-0 ${
+    `w-full border-l-2 px-5 py-3 text-sm transition ${
       pathname === href
-        ? 'bg-[rgba(155,188,255,0.18)] text-[var(--fr-white)]'
-        : 'text-[var(--fr-muted)] hover:bg-[rgba(15,26,47,0.6)] hover:text-[var(--fr-white)]'
+        ? 'border-[var(--fr-blue)] bg-[rgba(155,188,255,0.07)] text-[var(--fr-white)]'
+        : 'border-transparent text-[var(--fr-muted)] hover:border-[var(--fr-border)] hover:text-[var(--fr-white)]'
     }`;
 
   return (
@@ -102,16 +103,16 @@ export default function Header() {
         }`}
       >
         <div className="flex h-full flex-col gap-6">
-          <div className="p-6">
-            <div className="flex items-center gap-3">
-              <img src="/logo_ethcc.png" alt="6R logo" className="h-12 w-auto" />
-              <span className="text-sm font-semibold tracking-tight text-[var(--fr-white)]">
-                6R x EthCC
-              </span>
-            </div>
+          <div className="flex flex-col items-center justify-center gap-3 px-6 py-6">
+            <img src={logo.src} alt="6R logo" className="h-16 w-auto" />
+            <span className="text-xs font-semibold uppercase tracking-widest text-[var(--fr-muted)] opacity-60">
+              6R x EthCC
+            </span>
           </div>
 
-          <nav className="mx-auto mt-4 flex w-full flex-col overflow-hidden border border-[var(--fr-border)]">
+          <div className="h-px w-full bg-[var(--fr-border)]" />
+
+          <nav className="flex w-full flex-col py-2">
             <Link href="/" className={linkClasses('/')}>Vote</Link>
             <Link href="/account" className={linkClasses('/account')}>Account</Link>
             <Link href="/mint" className={linkClasses('/mint')}>Mint</Link>
