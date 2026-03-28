@@ -141,12 +141,15 @@ export default function Page() {
   return (
     <main className="fr-bg">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-10">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Mint Passport</h1>
-          <p className="text-sm fr-muted">
-            Mint your own on-chain passport to join the 6th Republic.
-          </p>
-        </div>
+        <section className="fr-panel overflow-hidden px-8 py-8 text-center">
+          <div className="mb-5 flex h-px w-full overflow-hidden rounded-full">
+            <div className="flex-1 bg-[var(--fr-blue)]" />
+            <div className="flex-1 bg-[var(--fr-white)] opacity-15" />
+            <div className="flex-1 bg-[var(--fr-red)]" />
+          </div>
+          <h1 className="text-4xl font-bold tracking-tight text-[var(--fr-white)]">Mint Passport</h1>
+          <p className="mt-2 text-sm fr-muted">Mint your on-chain identity to join the 6th Republic.</p>
+        </section>
 
         <section className="fr-panel p-6">
           <div className="flex items-center justify-between">

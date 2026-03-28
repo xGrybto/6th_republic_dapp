@@ -24,6 +24,7 @@ import { toAddress } from '@/app/lib/address';
 import { ORCHESTRATOR_ADDRESS } from '@/app/lib/contracts';
 import { useAutoDismiss } from '@/app/lib/hooks';
 import { validateInput } from '@/app/lib/utils';
+import { Tooltip } from '@/app/ui/tooltip';
 
 // ─── ABIs ─────────────────────────────────────────────────────────────────────
 
@@ -415,12 +416,48 @@ export default function Page() {
   return (
     <main className="fr-bg">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-10">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Vote</h1>
-          <p className="text-sm fr-muted">
-            Join 6R community, vote in a decentralized way !
-          </p>
-        </div>
+        {/* Hero */}
+        <section className="fr-panel overflow-hidden px-8 py-10 text-center">
+          <div className="mb-6 flex h-px w-full overflow-hidden rounded-full">
+            <div className="flex-1 bg-[var(--fr-blue)]" />
+            <div className="flex-1 bg-[var(--fr-white)] opacity-15" />
+            <div className="flex-1 bg-[var(--fr-red)]" />
+          </div>
+          <h1 className="text-4xl font-bold tracking-tight text-[var(--fr-white)]">VI<sup className="text-2xl">e</sup> Republic</h1>
+          <p className="mt-2 text-sm fr-muted">Participatory democracy on-chain</p>
+          <p className="mt-1 text-xs fr-muted opacity-50">EthCC · Cannes</p>
+        </section>
+
+        {/* How it works */}
+        <details className="fr-panel group">
+          <summary className="flex cursor-pointer list-none items-center justify-between p-6">
+            <h2 className="text-lg font-medium">How it works</h2>
+            <svg className="h-4 w-4 flex-shrink-0 fr-muted transition-transform duration-200 group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 9l-7 7-7-7" />
+            </svg>
+          </summary>
+          <div className="grid gap-4 px-6 pb-6 sm:grid-cols-2">
+            <div className="fr-panel-muted p-4">
+              <p className="text-sm font-medium text-[var(--fr-white)]">1 — Get Sepolia ETH</p>
+              <p className="mt-1 text-xs fr-muted leading-relaxed">This app runs exclusively on the Sepolia testnet. Every transaction requires gas — get test ETH from a Sepolia faucet before anything else.</p>
+            </div>
+            <div className="fr-panel-muted p-4">
+              <p className="text-sm font-medium text-[var(--fr-white)]">2 — Mint your Passport</p>
+              <p className="mt-1 text-xs fr-muted leading-relaxed">A Soulbound Token (SBT) that serves as your on-chain identity. Required to participate in votes.</p>
+              <p className="mt-2 text-[10px] text-[var(--fr-blue)] opacity-70">→ Mint page</p>
+            </div>
+            <div className="fr-panel-muted p-4">
+              <p className="text-sm font-medium text-[var(--fr-white)]">3 — Vote</p>
+              <p className="mt-1 text-xs fr-muted leading-relaxed">When a proposal is active, cast your YES or NO vote directly on-chain. Each passport counts as one vote.</p>
+              <p className="mt-2 text-[10px] text-[var(--fr-blue)] opacity-70">→ Vote page</p>
+            </div>
+            <div className="fr-panel-muted p-4">
+              <p className="text-sm font-medium text-[var(--fr-white)]">4 — Delegate <span className="fr-muted opacity-60">(optional)</span></p>
+              <p className="mt-1 text-xs fr-muted leading-relaxed">Assign your vote to a trusted representative, or enable Delegate Mode to receive voting power from others.</p>
+              <p className="mt-2 text-[10px] text-[var(--fr-blue)] opacity-70">→ Account page</p>
+            </div>
+          </div>
+        </details>
 
         {/* Create a new proposal — owner only */}
         {isClient && isOwner && (
@@ -485,6 +522,7 @@ export default function Page() {
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-medium">Current Proposal</h2>
           </div>
+          <p className="mt-1 text-xs fr-muted opacity-60">Cast your vote on the active community proposal.</p>
 
           {counterError && (
             <p className="mt-4 text-sm text-[var(--fr-red)]">Error: {counterError.message}</p>
@@ -524,10 +562,14 @@ export default function Page() {
               )}
 
               {/* Voting countdown + vote buttons */}
-              {isClient && isOngoingFinal && votingCountdown && (
-                <p className="text-sm text-[var(--fr-blue)]">
-                  Voting ends in: {votingCountdown}
-                </p>
+              {isClient && isOngoingFinal && (
+                <div className="flex items-center gap-2 text-sm text-[var(--fr-blue)]">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--fr-blue)] opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--fr-blue)]" />
+                  </span>
+                  {votingCountdown ? <>Voting ends in: {votingCountdown}</> : 'Vote in progress'}
+                </div>
               )}
               {isClient && isOngoingFinal && !isVotingExpired && (
                 <div className="grid gap-2 md:grid-cols-2">
@@ -581,7 +623,15 @@ export default function Page() {
 
           {/* Waiting message */}
           {!isProposalLoading && (isEndedFinal || isEmptyProposal || currentProposal === undefined) && (
-            <p className="mt-6 text-center text-sm fr-muted">Waiting for a new vote proposal</p>
+            <div className="mt-4 flex flex-col items-center gap-3 rounded-xl border border-dashed border-[var(--fr-border)] py-10">
+              <svg className="h-10 w-10 opacity-20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="3" y="8" width="18" height="13" rx="2" />
+                <path d="M16 8V6a4 4 0 0 0-8 0v2" />
+                <path d="M12 13v3M10.5 14.5h3" />
+              </svg>
+              <p className="text-sm font-medium text-[var(--fr-white)] opacity-50">No active proposal</p>
+              <p className="text-xs fr-muted opacity-50">A new vote will appear here once created.</p>
+            </div>
           )}
         </section>
 
@@ -589,6 +639,7 @@ export default function Page() {
         {(pastProposalIds.length > 0 || (isEndedFinal && currentProposal && !isEmptyProposal)) && (
           <section className="fr-panel p-6">
             <h2 className="text-lg font-medium">Past Proposals</h2>
+            <p className="mt-1 text-xs fr-muted opacity-60">Completed votes — results weighted by delegation.</p>
             <div className="mt-4 flex flex-col gap-3">
 
               {/* Current proposal pinned at top if ended */}
@@ -600,18 +651,29 @@ export default function Page() {
                       <div className="font-medium text-[var(--fr-white)]">{currentProposal[0]}</div>
                     </div>
                   </div>
-                  {voteCount && (
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div className="fr-panel rounded-lg px-3 py-2">
-                        <div className="fr-muted">YES</div>
-                        <div className="font-semibold text-[var(--fr-white)]">{voteCount[0].toString()}</div>
+                  {voteCount && (() => {
+                    const yes = Number(voteCount[0]);
+                    const no  = Number(voteCount[1]);
+                    const total = yes + no;
+                    const yesPct = total === 0 ? 50 : Math.round((yes / total) * 100);
+                    const noPct  = 100 - yesPct;
+                    return (
+                      <div className="grid gap-2 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-[var(--fr-blue)] font-semibold">YES — {yes}</span>
+                          <span className="text-[var(--fr-red)] font-semibold">NO — {no}</span>
+                        </div>
+                        <div className="flex h-2 w-full overflow-hidden rounded-full">
+                          <div style={{ width: `${yesPct}%` }} className="bg-[var(--fr-blue)] transition-all duration-500" />
+                          <div style={{ width: `${noPct}%` }} className="bg-[var(--fr-red)] transition-all duration-500" />
+                        </div>
+                        <div className="flex justify-between fr-muted">
+                          <span>{yesPct}%</span>
+                          <span>{noPct}%</span>
+                        </div>
                       </div>
-                      <div className="fr-panel rounded-lg px-3 py-2">
-                        <div className="fr-muted">NO</div>
-                        <div className="font-semibold text-[var(--fr-white)]">{voteCount[1].toString()}</div>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
 
@@ -628,18 +690,29 @@ export default function Page() {
                         {p ? p[0] : 'Loading...'}
                       </div>
                     </div>
-                    {votes && (
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="fr-panel rounded-lg px-3 py-2">
-                          <div className="fr-muted">YES</div>
-                          <div className="font-semibold text-[var(--fr-white)]">{votes[0].toString()}</div>
+                    {votes && (() => {
+                      const yes = Number(votes[0]);
+                      const no  = Number(votes[1]);
+                      const total = yes + no;
+                      const yesPct = total === 0 ? 50 : Math.round((yes / total) * 100);
+                      const noPct  = 100 - yesPct;
+                      return (
+                        <div className="grid gap-2 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-[var(--fr-blue)] font-semibold">YES — {yes}</span>
+                            <span className="text-[var(--fr-red)] font-semibold">NO — {no}</span>
+                          </div>
+                          <div className="flex h-2 w-full overflow-hidden rounded-full">
+                            <div style={{ width: `${yesPct}%` }} className="bg-[var(--fr-blue)] transition-all duration-500" />
+                            <div style={{ width: `${noPct}%` }} className="bg-[var(--fr-red)] transition-all duration-500" />
+                          </div>
+                          <div className="flex justify-between fr-muted">
+                            <span>{yesPct}%</span>
+                            <span>{noPct}%</span>
+                          </div>
                         </div>
-                        <div className="fr-panel rounded-lg px-3 py-2">
-                          <div className="fr-muted">NO</div>
-                          <div className="font-semibold text-[var(--fr-white)]">{votes[1].toString()}</div>
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 );
               })}
